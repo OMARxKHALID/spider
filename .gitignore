@@ -1,0 +1,9 @@
+.venv/
+builddir/
+__pycache__/
+*.pyc
+.mesonpy/
+.ipynb_checkpoints/
+*.db
+*.log
+.vscode/

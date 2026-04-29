@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="spider">
+  <schema id="org.domain.Spider" path="/org/domain/Spider/">
+    <key name="ocr-engine" type="s">
+      <default>'tesseract'</default>
+      <summary>The OCR engine to use</summary>
+      <description>Supported values are 'tesseract' and 'paddleocr'.</description>
+    </key>
+    <key name="language" type="s">
+      <default>'eng'</default>
+      <summary>Target language for OCR</summary>
+    </key>
+  </schema>
+</schemalist>

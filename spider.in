@@ -1,0 +1,20 @@
+#!@PYTHON@
+import os
+import sys
+import signal
+
+# Set up paths
+pkgdatadir = '@DATADIR@/@PACKAGE_NAME@'
+if os.path.exists(pkgdatadir):
+    sys.path.insert(0, pkgdatadir)
+
+# Fallback for uninstalled run (development)
+srcdir = os.path.join(os.path.dirname(__file__), '..', 'src')
+if os.path.exists(os.path.join(srcdir, 'spider')):
+    sys.path.insert(0, srcdir)
+
+from spider.main import main
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    sys.exit(main())
