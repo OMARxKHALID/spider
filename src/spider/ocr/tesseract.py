@@ -9,10 +9,6 @@ logger = logging.getLogger(__name__)
 from spider.ocr.engine import OcrEngine
 from spider.core.models import OCRResult
 
-# NOTE: pytesseract wraps the Tesseract CLI as a subprocess.
-# For production, replace with tesserocr (C-binding) to avoid the subprocess
-# overhead on every call. pytesseract is used here for ease of setup.
-
 class TesseractEngine(OcrEngine):
     def __init__(self):
         self.lang = "eng"
@@ -27,15 +23,11 @@ class TesseractEngine(OcrEngine):
     def recognize(self, image: np.ndarray) -> OCRResult:
         start_time = time.time()
 
-        # Convert OpenCV array (BGR or Grayscale) to PIL Image
         if len(image.shape) == 2:
             pil_img = Image.fromarray(image, 'L')
         else:
-            pil_img = Image.fromarray(image[:, :, ::-1])  # BGR → RGB
+            pil_img = Image.fromarray(image[:, :, ::-1])
 
-        # Single tesseract call — get both text and confidence from image_to_data.
-        # Previously the code called image_to_data AND image_to_string separately,
-        # which ran the tesseract subprocess twice. This is fixed here.
         data = pytesseract.image_to_data(
             pil_img, lang=self.lang, output_type=pytesseract.Output.DICT
         )
@@ -50,7 +42,7 @@ class TesseractEngine(OcrEngine):
         ]
         text = " ".join(words)
 
-        logger.info("[Phase 4/5] Recognition: OCR complete in %.2fs (Words: %d, Confidence: %.2f)", 
+        logger.info("Recognition: OCR complete in %.2fs (Words: %d, Confidence: %.2f)", 
                     time.time() - start_time, len(words), avg_conf)
 
         return OCRResult(

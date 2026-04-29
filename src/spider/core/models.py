@@ -4,7 +4,7 @@ from typing import Optional
 @dataclass
 class OCRResult:
     text: str
-    confidence: float          # 0.0 – 1.0
+    confidence: float
     engine_used: str
     timestamp: float
     language: str = "eng"

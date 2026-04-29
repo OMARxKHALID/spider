@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            # Default to XDG_DATA_HOME
             data_dir = os.path.join(os.path.expanduser("~"), ".local", "share", "spider")
             os.makedirs(data_dir, exist_ok=True)
             db_path = os.path.join(data_dir, "history.db")
@@ -24,7 +23,6 @@ class DatabaseManager:
     def _init_db(self):
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Main history table (v2 Schema)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS history (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,12 +35,9 @@ class DatabaseManager:
                 )
             """)
             
-            # FTS5 Virtual Table with Trigram tokenizer for fuzzy/substring search
             try:
-                # Check if we need to upgrade the tokenizer
                 cursor.execute("SELECT compile_options FROM pragma_compile_options WHERE compile_options LIKE 'ENABLE_FTS5%'")
                 
-                # Check existing table info to see if we need to migrate
                 cursor.execute("SELECT sql FROM sqlite_master WHERE name='history_fts'")
                 existing_sql = cursor.fetchone()
                 if existing_sql and 'trigram' not in existing_sql[0].lower():
@@ -58,10 +53,8 @@ class DatabaseManager:
                     )
                 """)
                 
-                # Re-sync FTS if we just recreated it
                 cursor.execute("INSERT OR IGNORE INTO history_fts(rowid, text) SELECT id, text FROM history")
                 
-                # Triggers to keep FTS in sync
                 cursor.execute("DROP TRIGGER IF EXISTS history_ai")
                 cursor.execute("""
                     CREATE TRIGGER history_ai AFTER INSERT ON history BEGIN
@@ -121,7 +114,6 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM history")
-            # FTS5 triggers will automatically clean up history_fts
             conn.commit()
 
     def delete_result(self, result_id: int):

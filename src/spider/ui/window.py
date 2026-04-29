@@ -3,6 +3,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -18,23 +19,24 @@ class SpiderWindow(Adw.ApplicationWindow):
         self.set_title("Spider OCR")
         self.set_default_size(800, 600)
 
-        # Toast Overlay
+        icon_theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        icon_path = os.path.join(base_dir, "data")
+        if os.path.exists(os.path.join(icon_path, "org.domain.Spider.png")):
+            icon_theme.add_search_path(icon_path)
+
         self.toast_overlay = Adw.ToastOverlay()
         self.set_content(self.toast_overlay)
 
-        # Navigation View (libadwaita 1.4+)
         self.nav_view = Adw.NavigationView()
         self.toast_overlay.set_child(self.nav_view)
 
-        # 1. Home Page
         self.home_page = self._create_home_page()
         self.nav_view.push(self.home_page)
         
-        # 2. History Page
         self.history_view = HistoryView(self.coordinator.db)
         self.history_page = self._create_history_page()
         
-        # 3. Result Page
         logger.info("Building result and history pages...")
         self.result_page = self._create_result_page()
 
@@ -43,9 +45,8 @@ class SpiderWindow(Adw.ApplicationWindow):
         status_page = Adw.StatusPage()
         status_page.set_title("Ready to Capture")
         status_page.set_description("Press the capture button or use Ctrl+Shift+E")
-        status_page.set_icon_name("camera-photo-symbolic")
+        status_page.set_icon_name("org.domain.Spider")
 
-        # Button box
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
         btn_box.set_halign(Gtk.Align.CENTER)
         btn_box.set_margin_top(24)
@@ -66,21 +67,25 @@ class SpiderWindow(Adw.ApplicationWindow):
 
         status_page.set_child(btn_box)
 
-        # Toolbar View
         toolbar_view = Adw.ToolbarView()
         header_bar = Adw.HeaderBar()
         
-        # History button in header
         history_btn = Gtk.Button(icon_name="document-open-recent-symbolic")
+        history_btn.set_tooltip_text("History")
         history_btn.connect("clicked", lambda x: self.nav_view.push(self.history_page))
         header_bar.pack_start(history_btn)
+
+        about_btn = Gtk.Button(icon_name="help-about-symbolic")
+        about_btn.set_tooltip_text("About")
+        about_btn.connect("clicked", self._on_about_clicked)
+        header_bar.pack_end(about_btn)
         
         toolbar_view.add_top_bar(header_bar)
         toolbar_view.set_content(status_page)
         
         page = Adw.NavigationPage.new(toolbar_view, "home")
         page.set_title("Spider OCR")
-        self._home_status_page = status_page # Store reference
+        self._home_status_page = status_page
         return page
 
     def _create_result_page(self):
@@ -102,7 +107,6 @@ class SpiderWindow(Adw.ApplicationWindow):
         scroll.set_child(self.text_view)
         scroll.set_vexpand(True)
         
-        # Use a Clamp to prevent the text from being too wide on large screens
         clamp = Adw.Clamp()
         clamp.set_maximum_size(800)
         clamp.set_tightening_threshold(600)
@@ -114,15 +118,12 @@ class SpiderWindow(Adw.ApplicationWindow):
         
         toolbar_view = Adw.ToolbarView()
         header_bar = Adw.HeaderBar()
-        # NavigationView automatically adds back button
         
-        # New Capture button on result page for convenience
         new_cap_btn = Gtk.Button(icon_name="camera-photo-symbolic")
         new_cap_btn.set_tooltip_text("New Capture")
         new_cap_btn.connect("clicked", self.on_capture_clicked)
         header_bar.pack_end(new_cap_btn)
         
-        # Copy button
         copy_btn = Gtk.Button(icon_name="edit-copy-symbolic")
         copy_btn.connect("clicked", self._on_copy_result_clicked)
         header_bar.pack_end(copy_btn)
@@ -139,7 +140,6 @@ class SpiderWindow(Adw.ApplicationWindow):
         toolbar_view = Adw.ToolbarView()
         header_bar = Adw.HeaderBar()
         
-        # Clear All button
         clear_btn = Gtk.Button(icon_name="edit-clear-all-symbolic")
         clear_btn.set_tooltip_text("Clear All History")
         clear_btn.add_css_class("error")
@@ -148,7 +148,6 @@ class SpiderWindow(Adw.ApplicationWindow):
         
         toolbar_view.add_top_bar(header_bar)
         
-        # Add margins to history view
         self.history_view.set_margin_start(24)
         self.history_view.set_margin_end(24)
         self.history_view.set_margin_top(24)
@@ -162,6 +161,9 @@ class SpiderWindow(Adw.ApplicationWindow):
 
     def on_capture_clicked(self, button):
         logger.info("Capture button clicked")
+        if self.coordinator._is_busy:
+            return
+        self.add_toast("Capture Started")
         self._home_status_page.set_title("Capturing...")
         self.coordinator.start_capture_flow()
 
@@ -191,19 +193,18 @@ class SpiderWindow(Adw.ApplicationWindow):
                 with open(path, "rb") as f:
                     image_bytes = f.read()
 
+                self.add_toast("Processing Image...")
                 self._home_status_page.set_title("Processing...")
-                # Use the public API — never call private coordinator methods
                 self.coordinator.process_image(image_bytes)
         except Exception as e:
-            self.add_toast(f"Failed to open image: {str(e)})")
+            self.add_toast(f"Failed to open image: {str(e)}")
 
     def show_result(self, result):
-        logger.info("UI: Displaying OCR result (length: %d)", len(result.text))
+        logger.info("UI: Displaying OCR result")
         self._home_status_page.set_title("Ready to Capture")
         buffer = self.text_view.get_buffer()
         buffer.set_text(result.text, -1)
         
-        # Only push if it's not already the visible page
         if self.nav_view.get_visible_page() != self.result_page:
             self.nav_view.push(self.result_page)
             
@@ -217,7 +218,6 @@ class SpiderWindow(Adw.ApplicationWindow):
         logger.info("Copy result requested")
         buffer = self.text_view.get_buffer()
         text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
-        # Use ContentProvider for maximum compatibility on Wayland
         self.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(text))
         self.add_toast("Copied to clipboard")
 
@@ -226,6 +226,19 @@ class SpiderWindow(Adw.ApplicationWindow):
         self.coordinator.db.clear_history()
         self.history_view.refresh()
         self.add_toast("History cleared")
+
+    def _on_about_clicked(self, btn):
+        about = Adw.AboutWindow(
+            transient_for=self,
+            application_name="Spider OCR",
+            application_icon="org.domain.Spider",
+            developer_name="omarxkhalid",
+            version="0.1.0",
+            website="https://github.com/omarxkhalid/spider",
+            issue_url="https://github.com/omarxkhalid/spider/issues",
+            copyright="© 2026 omarxkhalid"
+        )
+        about.present()
 
     def add_toast(self, text):
         toast = Adw.Toast.new(text)

@@ -4,7 +4,7 @@
 
 <div align="center">
 <figure>
-<img src="https://raw.githubusercontent.com/OMARxKHALID/spider/main/data/org.domain.Spider.svg" width="128" alt="Spider logo" />
+<img src="data/org.domain.Spider.png" width="128" alt="Spider logo" />
 </figure>
 </div>
 
@@ -16,7 +16,7 @@ Spider OCR is a premium, high-performance desktop application for Linux designed
 ## See it in action
 
 <div align="center">
-<img src="https://github.com/user-attachments/assets/f292b6ce-b530-4e8e-b9db-8770a1e27946" alt="Spider window" />
+<img src="data/screenshot.png" alt="Spider window" />
 </div>
 
 ## Get Spider

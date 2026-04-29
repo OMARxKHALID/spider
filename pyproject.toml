@@ -6,8 +6,10 @@ build-backend = "poetry.core.masonry.api"
 name = "spider"
 version = "0.1.0"
 description = "Linux OCR Desktop Application"
-authors = ["Spider Team"]
+authors = ["omarxkhalid"]
 packages = [{from = "src", include = "spider"}]
+homepage = "https://github.com/omarxkhalid/spider"
+repository = "https://github.com/omarxkhalid/spider"
 
 [tool.poetry.dependencies]
 python = "^3.10"

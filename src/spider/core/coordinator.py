@@ -25,49 +25,49 @@ class PipelineCoordinator:
 
     def start_capture_flow(self):
         if self._is_busy:
-            logger.warning("Pipeline already running; ignoring new capture request")
+            logger.warning("Pipeline already busy; ignoring request")
             return
             
-        logger.info("[Phase 1/5] Initiation: Starting capture flow")
-        # Safety timeout: if the portal hangs, unlock after 60 seconds
+        self._is_busy = True
+        logger.info("Initiation: Starting capture flow")
+        
         if self._timeout_id:
             GLib.source_remove(self._timeout_id)
         self._timeout_id = GLib.timeout_add_seconds(60, self._safety_unlock)
+        
         self.portal.capture_interactive(self._on_capture_complete)
 
     def _safety_unlock(self):
         self._timeout_id = 0
-        if self._is_busy or self.window._home_status_page.get_title() == "Capturing...":
-            logger.warning("Pipeline safety timeout reached. Unlocking...")
+        if self._is_busy:
+            logger.warning("Pipeline safety timeout reached. Unlocking.")
             self._is_busy = False
             self._reset_ui_state()
         return False
 
     def process_image(self, image_bytes: bytes):
-        """Public entry point for processing an already-loaded image (e.g. file open)."""
+        if self._is_busy:
+            return
+        self._is_busy = True
         self._on_capture_complete(image_bytes)
 
     def _on_capture_complete(self, image_bytes):
-        # Cancel safety timeout as we have received a response
         if self._timeout_id:
             GLib.source_remove(self._timeout_id)
             self._timeout_id = 0
 
         if not image_bytes:
             logger.warning("Capture failed or cancelled")
+            self._is_busy = False
             GLib.idle_add(self._reset_ui_state)
             return
 
-        logger.info("[Phase 2/5] Acquisition: Image received (%d bytes)", len(image_bytes))
-        self._is_busy = True
-
-        # threading.Thread + GLib.idle_add is the PyGObject-recommended pattern
-        # for dispatching CPU work off the main thread and safely returning results.
+        logger.info("Acquisition: Image received (%d bytes)", len(image_bytes))
         thread = threading.Thread(target=self._run_pipeline, args=(image_bytes,), daemon=True)
         thread.start()
 
     def _run_pipeline(self, image_bytes):
-        logger.info("[Phase 3/5] Pre-Processing: Starting vision pipeline")
+        logger.info("Pre-Processing: Starting vision pipeline")
         try:
             processed_img = Preprocessor.process_image(image_bytes)
             result = self.ocr_engine.recognize(processed_img)
@@ -80,7 +80,7 @@ class PipelineCoordinator:
 
     def _on_pipeline_finished(self, result):
         self._is_busy = False
-        logger.info("[Phase 5/5] Delivery: Pipeline complete (Text length: %d)", len(result.text))
+        logger.info("Delivery: Pipeline complete")
         if hasattr(self.window, "show_result"):
             self.window.show_result(result)
         return False
@@ -88,7 +88,6 @@ class PipelineCoordinator:
     def _on_pipeline_error(self, error_msg):
         self._is_busy = False
         logger.error("Pipeline failed: %s", error_msg)
-        # Reset the UI title so it doesn't stay stuck on "Capturing..."
         self._reset_ui_state()
         if hasattr(self.window, "add_toast"):
             self.window.add_toast(f"Error: {error_msg}")
@@ -98,4 +97,3 @@ class PipelineCoordinator:
         if hasattr(self.window, "reset_home_title"):
             self.window.reset_home_title()
         return False
-

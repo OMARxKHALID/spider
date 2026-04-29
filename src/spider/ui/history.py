@@ -12,14 +12,12 @@ class HistoryView(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12, **kwargs)
         self.db = db_manager
         
-        # Search Entry
         self.search_bar = Gtk.SearchEntry(placeholder_text="Search history...")
         self.search_bar.connect("search-changed", self._on_search_changed)
         self.append(self.search_bar)
         
         self._search_timeout_id = 0
         
-        # List Box for history items
         self.list_box = Gtk.ListBox()
         self.list_box.add_css_class("boxed-list")
         self.list_box.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -33,7 +31,6 @@ class HistoryView(Gtk.Box):
 
     def refresh(self, query=None):
         logger.info("Refreshing history list (query: %s)", query)
-        # Clear current list
         while (child := self.list_box.get_first_child()):
             self.list_box.remove(child)
             
@@ -51,22 +48,18 @@ class HistoryView(Gtk.Box):
 
         for item in items:
             row = Adw.ActionRow()
-            # Escape markup to prevent Pango parsing errors (e.g. '&' or '<' in OCR text)
             escaped_text = GLib.markup_escape_text(item['text'][:100])
             row.set_title(escaped_text + ("..." if len(item['text']) > 100 else ""))
             
-            # Format timestamp
             dt = datetime.datetime.fromtimestamp(item['timestamp'])
             row.set_subtitle(dt.strftime("%Y-%m-%d %H:%M"))
             
-            # Add a copy button to the row
             copy_btn = Gtk.Button(icon_name="edit-copy-symbolic")
             copy_btn.add_css_class("flat")
             copy_btn.set_tooltip_text("Copy Text")
             copy_btn.connect("clicked", self._on_copy_clicked, item['text'])
             row.add_suffix(copy_btn)
 
-            # Add a delete button to the row
             del_btn = Gtk.Button(icon_name="user-trash-symbolic")
             del_btn.add_css_class("flat")
             del_btn.add_css_class("error")
@@ -89,7 +82,6 @@ class HistoryView(Gtk.Box):
 
     def _on_copy_clicked(self, button, text):
         logger.info("Historical item copy requested")
-        # Use ContentProvider for maximum compatibility across backends (Wayland/X11)
         self.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(text))
 
         root = self.get_root()
