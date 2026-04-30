@@ -1,7 +1,7 @@
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, Gio, GLib, Gdk
+from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GObject
 import logging
 import os
 
@@ -39,6 +39,41 @@ class SpiderWindow(Adw.ApplicationWindow):
         
         logger.info("Building result and history pages...")
         self.result_page = self._create_result_page()
+        
+        self._setup_shortcuts()
+
+    def _setup_shortcuts(self):
+        controller = Gtk.ShortcutController()
+        
+        capture_trigger = Gtk.ShortcutTrigger.parse_string("<Control><Shift>C")
+        capture_action = Gtk.CallbackAction.new(lambda *_: [self.on_capture_clicked(None), True][-1])
+        capture_shortcut = Gtk.Shortcut.new(capture_trigger, capture_action)
+        controller.add_shortcut(capture_shortcut)
+        
+        history_trigger = Gtk.ShortcutTrigger.parse_string("<Control>H")
+        def toggle_history(*_):
+            if self.nav_view.get_visible_page() == self.history_page:
+                self.nav_view.pop()
+            else:
+                self.nav_view.push(self.history_page)
+            return True
+        history_action = Gtk.CallbackAction.new(toggle_history)
+        history_shortcut = Gtk.Shortcut.new(history_trigger, history_action)
+        controller.add_shortcut(history_shortcut)
+        
+        copy_trigger = Gtk.ShortcutTrigger.parse_string("<Control>C")
+        def do_copy(*_):
+            if self.nav_view.get_visible_page() == self.result_page:
+                focus_widget = self.get_focus()
+                if focus_widget != self.text_view:
+                    self._on_copy_result_clicked(self.copy_btn)
+                    return True
+            return False
+        copy_action = Gtk.CallbackAction.new(do_copy)
+        copy_shortcut = Gtk.Shortcut.new(copy_trigger, copy_action)
+        controller.add_shortcut(copy_shortcut)
+        
+        self.add_controller(controller)
 
     def _create_home_page(self):
         logger.info("Creating home page")
@@ -52,23 +87,25 @@ class SpiderWindow(Adw.ApplicationWindow):
         btn_box.set_margin_top(24)
         btn_box.set_margin_bottom(24)
 
-        capture_btn = Gtk.Button(label="Capture Region")
-        capture_btn.add_css_class("suggested-action")
-        capture_btn.add_css_class("pill")
-        capture_btn.set_size_request(160, 44)
-        capture_btn.connect("clicked", self.on_capture_clicked)
-        btn_box.append(capture_btn)
+        self.capture_btn = Gtk.Button(label="Capture Region")
+        self.capture_btn.add_css_class("suggested-action")
+        self.capture_btn.add_css_class("pill")
+        self.capture_btn.set_size_request(160, 44)
+        self.capture_btn.connect("clicked", self.on_capture_clicked)
+        btn_box.append(self.capture_btn)
 
-        open_btn = Gtk.Button(label="Open Image")
-        open_btn.add_css_class("pill")
-        open_btn.set_size_request(160, 44)
-        open_btn.connect("clicked", self.on_open_clicked)
-        btn_box.append(open_btn)
+        self.open_btn = Gtk.Button(label="Open Image")
+        self.open_btn.add_css_class("pill")
+        self.open_btn.set_size_request(160, 44)
+        self.open_btn.connect("clicked", self.on_open_clicked)
+        btn_box.append(self.open_btn)
 
         status_page.set_child(btn_box)
 
         toolbar_view = Adw.ToolbarView()
         header_bar = Adw.HeaderBar()
+        self.home_title = Adw.WindowTitle(title="Spider OCR", subtitle="")
+        header_bar.set_title_widget(self.home_title)
         
         history_btn = Gtk.Button(icon_name="document-open-recent-symbolic")
         history_btn.set_tooltip_text("History")
@@ -110,7 +147,17 @@ class SpiderWindow(Adw.ApplicationWindow):
         clamp = Adw.Clamp()
         clamp.set_maximum_size(800)
         clamp.set_tightening_threshold(600)
-        clamp.set_child(scroll)
+        
+        self.stats_label = Gtk.Label()
+        self.stats_label.add_css_class("dim-label")
+        self.stats_label.set_margin_top(8)
+        self.stats_label.set_margin_bottom(12)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.append(scroll)
+        box.append(self.stats_label)
+        
+        clamp.set_child(box)
         clamp.set_margin_start(24)
         clamp.set_margin_end(24)
         clamp.set_margin_top(24)
@@ -118,15 +165,17 @@ class SpiderWindow(Adw.ApplicationWindow):
         
         toolbar_view = Adw.ToolbarView()
         header_bar = Adw.HeaderBar()
+        self.result_title = Adw.WindowTitle(title="Spider OCR", subtitle="")
+        header_bar.set_title_widget(self.result_title)
         
         new_cap_btn = Gtk.Button(icon_name="camera-photo-symbolic")
         new_cap_btn.set_tooltip_text("New Capture")
         new_cap_btn.connect("clicked", self.on_capture_clicked)
         header_bar.pack_end(new_cap_btn)
         
-        copy_btn = Gtk.Button(icon_name="edit-copy-symbolic")
-        copy_btn.connect("clicked", self._on_copy_result_clicked)
-        header_bar.pack_end(copy_btn)
+        self.copy_btn = Gtk.Button(icon_name="edit-copy-symbolic")
+        self.copy_btn.connect("clicked", self._on_copy_result_clicked)
+        header_bar.pack_end(self.copy_btn)
         
         toolbar_view.add_top_bar(header_bar)
         toolbar_view.set_content(clamp)
@@ -140,13 +189,26 @@ class SpiderWindow(Adw.ApplicationWindow):
         toolbar_view = Adw.ToolbarView()
         header_bar = Adw.HeaderBar()
         
+        self.history_title = Adw.WindowTitle(title="History", subtitle="")
+        header_bar.set_title_widget(self.history_title)
+        
+        search_btn = Gtk.ToggleButton(icon_name="system-search-symbolic")
+        search_btn.set_tooltip_text("Search History")
+        header_bar.pack_start(search_btn)
+        
         clear_btn = Gtk.Button(icon_name="edit-clear-all-symbolic")
         clear_btn.set_tooltip_text("Clear All History")
         clear_btn.add_css_class("error")
         clear_btn.connect("clicked", self._on_clear_history_clicked)
         header_bar.pack_end(clear_btn)
         
+        search_bar = Gtk.SearchBar()
+        search_bar.connect_entry(self.history_view.search_bar)
+        search_bar.set_child(self.history_view.search_bar)
+        search_btn.bind_property("active", search_bar, "search-mode-enabled", GObject.BindingFlags.BIDIRECTIONAL)
+        
         toolbar_view.add_top_bar(header_bar)
+        toolbar_view.add_top_bar(search_bar)
         
         self.history_view.set_margin_start(24)
         self.history_view.set_margin_end(24)
@@ -163,9 +225,16 @@ class SpiderWindow(Adw.ApplicationWindow):
         logger.info("Capture button clicked")
         if self.coordinator.is_busy:
             return
-        self.add_toast("Capture Started")
+            
+        if self.nav_view.get_visible_page() != self.home_page:
+            self.nav_view.pop_to_page(self.home_page)
+            
+        self.capture_btn.set_sensitive(False)
+        self.open_btn.set_sensitive(False)
         self._home_status_page.set_title("Capturing...")
-        self.coordinator.start_capture_flow()
+        if hasattr(self, 'home_title'):
+            self.home_title.set_subtitle("Capturing...")
+        GLib.idle_add(self.coordinator.start_capture_flow)
 
     def on_open_clicked(self, button):
         logger.info("Open image button clicked")
@@ -202,6 +271,11 @@ class SpiderWindow(Adw.ApplicationWindow):
     def show_result(self, result):
         logger.info("UI: Displaying OCR result")
         self._home_status_page.set_title("Ready to Capture")
+        if hasattr(self, 'home_title'):
+            self.home_title.set_subtitle("")
+            
+        self.capture_btn.set_sensitive(True)
+        self.open_btn.set_sensitive(True)
 
         if not result.text or not result.text.strip():
             self.add_toast("No text detected in capture")
@@ -210,21 +284,37 @@ class SpiderWindow(Adw.ApplicationWindow):
         buffer = self.text_view.get_buffer()
         buffer.set_text(result.text, -1)
         
+        word_count = len(result.text.split())
+        char_count = len(result.text)
+        self.stats_label.set_label(f"{word_count} words · {char_count} characters")
+        if hasattr(self, 'result_title'):
+            self.result_title.set_subtitle(f"{word_count} words extracted")
+        
         if self.nav_view.get_visible_page() != self.result_page:
             self.nav_view.push(self.result_page)
             
         self.history_view.refresh()
-        self.add_toast("OCR Complete")
 
     def reset_home_title(self):
         self._home_status_page.set_title("Ready to Capture")
+        if hasattr(self, 'home_title'):
+            self.home_title.set_subtitle("")
+        self.capture_btn.set_sensitive(True)
+        self.open_btn.set_sensitive(True)
 
     def _on_copy_result_clicked(self, btn):
         logger.info("Copy result requested")
         buffer = self.text_view.get_buffer()
         text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
         self.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(text))
-        self.add_toast("Copied to clipboard")
+        
+        btn.set_icon_name("emblem-ok-symbolic")
+        
+        def restore_copy_icon():
+            btn.set_icon_name("edit-copy-symbolic")
+            return False
+            
+        GLib.timeout_add(2000, restore_copy_icon)
 
     def _on_clear_history_clicked(self, btn):
         logger.info("Clear history requested")
@@ -233,17 +323,15 @@ class SpiderWindow(Adw.ApplicationWindow):
         self.add_toast("History cleared")
 
     def _on_about_clicked(self, btn):
-        about = Adw.AboutWindow(
-            transient_for=self,
-            application_name="Spider OCR",
-            application_icon="org.domain.Spider",
-            developer_name="omarxkhalid",
-            version="0.1.0",
-            website="https://github.com/omarxkhalid/spider",
-            issue_url="https://github.com/omarxkhalid/spider/issues",
-            copyright="© 2026 omarxkhalid"
-        )
-        about.present()
+        about = Adw.AboutDialog.new()
+        about.set_application_name("Spider OCR")
+        about.set_application_icon("org.domain.Spider")
+        about.set_developer_name("omarxkhalid")
+        about.set_version("0.1.0")
+        about.set_website("https://github.com/omarxkhalid/spider")
+        about.set_issue_url("https://github.com/omarxkhalid/spider/issues")
+        about.set_copyright("© 2026 omarxkhalid")
+        about.present(self)
 
     def add_toast(self, text):
         toast = Adw.Toast.new(text)

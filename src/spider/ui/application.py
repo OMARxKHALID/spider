@@ -17,8 +17,7 @@ class SpiderApplication(Adw.Application):
     def do_activate(self):
         if not shutil.which('tesseract'):
             logger.error("Tesseract binary not found in PATH")
-            dialog = Adw.MessageDialog.new(
-                None,
+            dialog = Adw.AlertDialog.new(
                 "Missing Dependency",
                 "Tesseract OCR is not installed.\n\nPlease install it to use Spider OCR:\nsudo apt install tesseract-ocr"
             )

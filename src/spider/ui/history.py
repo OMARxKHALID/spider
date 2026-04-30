@@ -14,9 +14,15 @@ class HistoryView(Gtk.Box):
         
         self.search_bar = Gtk.SearchEntry(placeholder_text="Search history...")
         self.search_bar.connect("search-changed", self._on_search_changed)
-        self.append(self.search_bar)
         
         self._search_timeout_id = 0
+        
+        self.stack = Gtk.Stack()
+        
+        self.empty_page = Adw.StatusPage()
+        self.empty_page.set_icon_name("document-open-recent-symbolic")
+        self.empty_page.set_title("No History Yet")
+        self.empty_page.set_description("Your captured text will appear here.")
         
         self.list_box = Gtk.ListBox()
         self.list_box.add_css_class("boxed-list")
@@ -25,7 +31,16 @@ class HistoryView(Gtk.Box):
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_vexpand(True)
         scrolled.set_child(self.list_box)
-        self.append(scrolled)
+        
+        self.stack.add_named(self.empty_page, "empty")
+        self.stack.add_named(scrolled, "list")
+        
+        self.append(self.stack)
+        
+        css = b"row .delete-button { opacity: 0; } row:hover .delete-button { opacity: 1; }"
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         
         self.refresh()
 
@@ -40,11 +55,10 @@ class HistoryView(Gtk.Box):
             items = self.db.get_history()
             
         if not items:
-            empty_label = Gtk.Label(label="No history found")
-            empty_label.add_css_class("dim-label")
-            empty_label.set_margin_top(20)
-            self.list_box.append(empty_label)
+            self.stack.set_visible_child_name("empty")
             return
+            
+        self.stack.set_visible_child_name("list")
 
         for item in items:
             row = Adw.ActionRow()
@@ -52,7 +66,7 @@ class HistoryView(Gtk.Box):
             row.set_title(escaped_text + ("..." if len(item['text']) > 100 else ""))
             
             dt = datetime.datetime.fromtimestamp(item['timestamp'])
-            row.set_subtitle(dt.strftime("%Y-%m-%d %H:%M"))
+            row.set_subtitle(self._relative_time(dt))
             
             copy_btn = Gtk.Button(icon_name="edit-copy-symbolic")
             copy_btn.add_css_class("flat")
@@ -63,11 +77,29 @@ class HistoryView(Gtk.Box):
             del_btn = Gtk.Button(icon_name="user-trash-symbolic")
             del_btn.add_css_class("flat")
             del_btn.add_css_class("error")
+            del_btn.add_css_class("delete-button")
             del_btn.set_tooltip_text("Delete Item")
             del_btn.connect("clicked", self._on_delete_clicked, item['id'])
             row.add_suffix(del_btn)
             
             self.list_box.append(row)
+
+    def _relative_time(self, dt):
+        now = datetime.datetime.now()
+        diff = now - dt
+        seconds = diff.total_seconds()
+        if seconds < 60:
+            return "Just now"
+        elif seconds < 3600:
+            return f"{int(seconds // 60)} minutes ago"
+        elif seconds < 86400:
+            return f"{int(seconds // 3600)} hours ago"
+        elif diff.days == 1:
+            return "Yesterday"
+        elif diff.days < 7:
+            return f"{diff.days} days ago"
+        else:
+            return dt.strftime("%b %d")
 
     def _on_search_changed(self, entry):
         if self._search_timeout_id:
