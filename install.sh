@@ -11,7 +11,7 @@ info() { printf "${CYAN}${BOLD}==>${NC} ${BOLD}%s${NC}\n" "$1"; }
 success() { printf "${GREEN}${BOLD}==>${NC} ${BOLD}%s${NC}\n" "$1"; }
 error() { printf "${RED}${BOLD}Error:${NC} %s\n" "$1"; exit 1; }
 
-info "Spider OCR: Starting Stabilization Sweep"
+info "Spider OCR: Starting Build"
 
 info "Checking for core dependencies..."
 deps=(python3 meson ninja-build tesseract-ocr pkg-config libgirepository1.0-dev libcairo2-dev)
@@ -34,6 +34,9 @@ if [[ -d "builddir" ]]; then
     info "Refreshing build directory..."
     rm -rf builddir
 fi
+
+# Activate the venv so meson picks up the venv Python for the launcher shebang
+source .venv/bin/activate
 
 info "Configuring project..."
 meson setup builddir --prefix=/usr/local

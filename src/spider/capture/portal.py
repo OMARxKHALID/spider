@@ -1,6 +1,7 @@
 import uuid
 import os
 import urllib.parse
+import tempfile
 from gi.repository import Gio, GLib
 import logging
 
@@ -86,7 +87,7 @@ class PortalCapture:
         if ctx["sub_id"]:
             try:
                 self.connection.signal_unsubscribe(ctx["sub_id"])
-            except:
+            except Exception:
                 pass
             ctx["sub_id"] = 0
             
@@ -98,12 +99,27 @@ class PortalCapture:
             if uri_var:
                 uri = uri_var.get_string()
                 parsed_uri = urllib.parse.urlparse(uri)
-                file_path = urllib.parse.unquote(parsed_uri.path)
+                file_path = os.path.realpath(urllib.parse.unquote(parsed_uri.path))
                 
+                allowed_prefixes = (
+                    tempfile.gettempdir(),
+                    f"/run/user/{os.getuid()}",
+                    os.path.expanduser("~"),
+                )
+                if not any(file_path.startswith(p) for p in allowed_prefixes):
+                    logger.error("Portal returned suspicious path: %s", file_path)
+                    ctx["callback"](None)
+                    return
+
                 try:
-                    with open(file_path, "rb") as f:
-                        image_bytes = f.read()
-                    os.remove(file_path)
+                    image_bytes = None
+                    try:
+                        with open(file_path, "rb") as f:
+                            image_bytes = f.read()
+                    finally:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+
                     ctx["callback"](image_bytes)
                 except Exception as e:
                     logger.error("Error reading screenshot file: %s", e)

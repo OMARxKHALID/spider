@@ -12,12 +12,10 @@ from spider.core.models import OCRResult
 class TesseractEngine(OcrEngine):
     def __init__(self):
         self.lang = "eng"
-        self.is_loaded = False
 
     def load_model(self, lang: str) -> bool:
         logger.info("Loading Tesseract model for language: %s", lang)
         self.lang = lang
-        self.is_loaded = True
         return True
 
     def recognize(self, image: np.ndarray) -> OCRResult:

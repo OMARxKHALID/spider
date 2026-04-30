@@ -49,7 +49,7 @@ rm -rf builddir .venv
 
 2. **Remove Local Data** (History and Database):
    ```bash
-   rm -rf ~/.local/share/spider
+   rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/spider"
    ```
 
 3. **Remove Source Code**:

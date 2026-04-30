@@ -14,40 +14,54 @@ class Preprocessor:
             raise ValueError("Could not decode image bytes")
             
         h, w = image.shape[:2]
-        laplacian_var = cv2.Laplacian(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
-        logger.info("Pre-Processing: %dx%d (Sharpness: %.2f)", w, h, laplacian_var)
-            
+        if w < 400 or h < 400:
+            scale = 400.0 / min(w, h)
+            image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+            logger.info("Upscaling small image for better OCR (factor: %.2f)", scale)
+
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        if Preprocessor.is_high_quality(gray):
+        h, w = gray.shape[:2]
+        if w > 1000:
+            scale = 1000.0 / w
+            check_img = cv2.resize(gray, (1000, int(h * scale)))
+        else:
+            check_img = gray
+            
+        laplacian_var = cv2.Laplacian(check_img, cv2.CV_64F).var()
+        logger.info("Pre-Processing: %dx%d (Sharpness: %.2f)", w, h, laplacian_var)
+            
+        if Preprocessor.is_high_quality(gray, laplacian_var):
             logger.info("High quality image detected. Skipping heavy processing.")
             return gray
 
         std_val = gray.std()
         if std_val < 40:
             logger.info("Low contrast detected (std: %.2f). Applying CLAHE.", std_val)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            h_g, w_g = gray.shape[:2]
+            tile_size = max(1, min(8, h_g // 2, w_g // 2))
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(tile_size, tile_size))
             gray = clahe.apply(gray)
             
         mean_val = gray.mean()
         if mean_val > 128:
-            logger.info("Dark background detected (mean: %.2f). Inverting.", mean_val)
+            logger.info("Bright image detected (mean: %.2f). Inverting for OCR.", mean_val)
             gray = cv2.bitwise_not(gray)
             
         gray = Preprocessor.deskew(gray)
         return gray
 
     @staticmethod
-    def is_high_quality(img: np.ndarray) -> bool:
-        laplacian_var = cv2.Laplacian(img, cv2.CV_64F).var()
+    def is_high_quality(img: np.ndarray, laplacian_var: float) -> bool:
         rms_contrast = img.std()
         return laplacian_var > 200 and rms_contrast > 60
 
     @staticmethod
     def deskew(image: np.ndarray) -> np.ndarray:
         inv = cv2.bitwise_not(image)
-        coords = np.column_stack(np.where(inv > 0))
-        if len(coords) == 0:
+        coords = cv2.findNonZero(inv)
+        
+        if coords is None or len(coords) == 0:
             return image
             
         angle = cv2.minAreaRect(coords)[-1]

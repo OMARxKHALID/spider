@@ -161,7 +161,7 @@ class SpiderWindow(Adw.ApplicationWindow):
 
     def on_capture_clicked(self, button):
         logger.info("Capture button clicked")
-        if self.coordinator._is_busy:
+        if self.coordinator.is_busy:
             return
         self.add_toast("Capture Started")
         self._home_status_page.set_title("Capturing...")
@@ -202,6 +202,11 @@ class SpiderWindow(Adw.ApplicationWindow):
     def show_result(self, result):
         logger.info("UI: Displaying OCR result")
         self._home_status_page.set_title("Ready to Capture")
+
+        if not result.text or not result.text.strip():
+            self.add_toast("No text detected in capture")
+            return
+
         buffer = self.text_view.get_buffer()
         buffer.set_text(result.text, -1)
         
@@ -242,4 +247,5 @@ class SpiderWindow(Adw.ApplicationWindow):
 
     def add_toast(self, text):
         toast = Adw.Toast.new(text)
+        toast.set_timeout(2)
         self.toast_overlay.add_toast(toast)
