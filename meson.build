@@ -17,6 +17,8 @@ conf.set('BINDIR', join_paths(get_option('prefix'), get_option('bindir')))
 conf.set('DATADIR', join_paths(get_option('prefix'), get_option('datadir')))
 conf.set('PYTHON', py_installation.full_path())
 
+# WARNING: The launcher shebang is an absolute path set at build time.
+# If you move this project directory, re-run install.sh to rebuild the launcher.
 configure_file(
   input: 'spider.in',
   output: 'org.domain.Spider',

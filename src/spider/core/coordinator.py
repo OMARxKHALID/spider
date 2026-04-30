@@ -48,6 +48,7 @@ class PipelineCoordinator:
         if self._pipeline_event.is_set():
             logger.warning("Pipeline timeout: task still running, UI notified")
             self._cancel_event.set()
+            self._pipeline_event.clear()
             if hasattr(self.window, "add_toast"):
                 self.window.add_toast("OCR is taking longer than expected...")
         return False
@@ -98,22 +99,28 @@ class PipelineCoordinator:
         except Exception as e:
             logger.error("Pipeline Worker Error: %s", e)
             GLib.idle_add(self._on_pipeline_error, str(e))
+        finally:
+            self._pipeline_event.clear()
+            if getattr(self, "db", None):
+                self.db.close()
 
     def _on_pipeline_finished(self, result):
+        if self.window is None or self.window.get_root() is None:
+            return GLib.SOURCE_REMOVE
         if self._timeout_id:
             GLib.source_remove(self._timeout_id)
             self._timeout_id = 0
-        self._pipeline_event.clear()
         logger.info("Delivery: Pipeline complete")
         if hasattr(self.window, "show_result"):
             self.window.show_result(result)
         return False
 
     def _on_pipeline_error(self, error_msg):
+        if self.window is None or self.window.get_root() is None:
+            return GLib.SOURCE_REMOVE
         if self._timeout_id:
             GLib.source_remove(self._timeout_id)
             self._timeout_id = 0
-        self._pipeline_event.clear()
         logger.error("Pipeline failed: %s", error_msg)
         self._reset_ui_state()
         if hasattr(self.window, "add_toast"):
@@ -121,6 +128,8 @@ class PipelineCoordinator:
         return False
 
     def _reset_ui_state(self):
+        if self.window is None or self.window.get_root() is None:
+            return GLib.SOURCE_REMOVE
         if hasattr(self.window, "reset_home_title"):
             self.window.reset_home_title()
         return False

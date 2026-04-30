@@ -44,8 +44,8 @@ class Preprocessor:
             gray = clahe.apply(gray)
             
         mean_val = gray.mean()
-        if mean_val > 128:
-            logger.info("Bright image detected (mean: %.2f). Inverting for OCR.", mean_val)
+        if mean_val < 128:  # dark background — invert for Tesseract
+            logger.info("Dark background detected. Inverting for OCR.")
             gray = cv2.bitwise_not(gray)
             
         gray = Preprocessor.deskew(gray)

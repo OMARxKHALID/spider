@@ -37,6 +37,18 @@ class DatabaseManager:
 
     def _init_db(self):
         conn = sqlite3.connect(self.db_path)
+        SCHEMA_VERSION = 1
+
+        cur = conn.cursor()
+        cur.execute("PRAGMA user_version")
+        version = cur.fetchone()[0]
+
+        if version < SCHEMA_VERSION:
+            # Run migrations here as version increments
+            # e.g. if version < 2: conn.execute("ALTER TABLE history ADD COLUMN foo TEXT")
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            conn.commit()
+
         cursor = conn.cursor()
         try:
             cursor.execute("PRAGMA journal_mode=WAL")

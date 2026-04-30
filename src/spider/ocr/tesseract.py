@@ -27,7 +27,11 @@ class TesseractEngine(OcrEngine):
             pil_img = Image.fromarray(image[:, :, ::-1])
 
         data = pytesseract.image_to_data(
-            pil_img, lang=self.lang, output_type=pytesseract.Output.DICT
+            pil_img,
+            lang=self.lang,
+            config='--psm 11',
+            timeout=30,
+            output_type=pytesseract.Output.DICT
         )
 
         conf_list = [int(c) for c in data['conf'] if int(c) != -1]

@@ -98,16 +98,26 @@ class PortalCapture:
             uri_var = results.lookup_value("uri", GLib.VariantType("s"))
             if uri_var:
                 uri = uri_var.get_string()
-                parsed_uri = urllib.parse.urlparse(uri)
-                file_path = os.path.realpath(urllib.parse.unquote(parsed_uri.path))
-                
+                file_path = Gio.File.new_for_uri(uri).get_path()
+                if file_path is None:
+                    logger.error("Portal returned an unresolvable URI: %s", uri)
+                    ctx["callback"](None)
+                    return
+
+                def _is_safe_path(base: str, target: str) -> bool:
+                    try:
+                        return os.path.commonpath([base, target]) == base
+                    except ValueError:
+                        return False
+
+                real_file_path = os.path.realpath(file_path)
                 allowed_prefixes = (
-                    tempfile.gettempdir(),
-                    f"/run/user/{os.getuid()}",
+                    GLib.get_tmp_dir(),
+                    GLib.get_user_runtime_dir(),
                     os.path.expanduser("~"),
                 )
-                if not any(file_path.startswith(p) for p in allowed_prefixes):
-                    logger.error("Portal returned suspicious path: %s", file_path)
+                if not any(_is_safe_path(p, real_file_path) for p in allowed_prefixes):
+                    logger.error("Portal returned suspicious path: %s", real_file_path)
                     ctx["callback"](None)
                     return
 
