@@ -1,11 +1,28 @@
-.venv/
+# Build & Packaging
 builddir/
+deb-build/
+AppDir/
+*.deb
+*.AppImage
+
+# Python
+.venv/
 __pycache__/
 *.pyc
+*.egg-info
+.pytest_cache/
+.mypy_cache/
 .mesonpy/
-.ipynb_checkpoints/
+
+# Local Data & Logs
 *.db
 *.log
+
+# IDE & Environment
 .vscode/
+.idea/
+.ipynb_checkpoints/
+.DS_Store
+
+# Miscellaneous
 *.zip
-clear_cache.sh

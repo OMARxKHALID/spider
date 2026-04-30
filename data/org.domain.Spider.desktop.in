@@ -1,10 +1,11 @@
 [Desktop Entry]
 Name=Spider OCR
 Comment=Extract text from images
-Exec=org.domain.Spider
+Exec=/usr/bin/org.domain.Spider
 Icon=org.domain.Spider
 Terminal=false
 Type=Application
-Categories=Utility;GTK;
+Categories=Utility;GTK;GNOME;
 StartupNotify=true
-DBusActivatable=true
+DBusActivatable=false
+StartupWMClass=org.domain.Spider

@@ -3,17 +3,25 @@ import os
 import sys
 import signal
 
-# Ensure we use the venv if available relative to the script's physical location
+# Get the absolute path of the directory containing this script
 script_dir = os.path.dirname(os.path.realpath(__file__))
+
+# 1. Handle Venv (local dev)
 venv_python = os.path.abspath(os.path.join(script_dir, '..', '.venv', 'bin', 'python3'))
 if os.path.exists(venv_python) and os.path.abspath(sys.executable) != venv_python:
     os.execl(venv_python, venv_python, *sys.argv)
 
-pkgdatadir = '@DATADIR@/@PACKAGE_NAME@'
-if os.path.exists(pkgdatadir):
-    sys.path.insert(0, pkgdatadir)
+# 2. Add package to path
+rel_datadir = os.path.abspath(os.path.join(script_dir, '..', 'share', 'spider'))
+if os.path.exists(rel_datadir):
+    sys.path.insert(0, rel_datadir)
 
-srcdir = os.path.join(os.path.dirname(__file__), '..', 'src')
+pkgdatadir = '@DATADIR@/@PACKAGE_NAME@'
+if os.path.exists(pkgdatadir) and not pkgdatadir.startswith('@'):
+    if pkgdatadir not in sys.path:
+        sys.path.insert(0, pkgdatadir)
+
+srcdir = os.path.abspath(os.path.join(script_dir, '..', 'src'))
 if os.path.exists(os.path.join(srcdir, 'spider')):
     sys.path.insert(0, srcdir)
 

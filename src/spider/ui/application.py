@@ -15,16 +15,26 @@ class SpiderApplication(Adw.Application):
         self.win = None
 
     def do_activate(self):
+        try:
+            import pytesseract
+            import PIL
+            import cv2
+        except ImportError as e:
+            logger.error(f"Missing Python dependency: {e.name}")
+            self.show_error_and_quit(
+                "Missing Dependencies",
+                f"The required Python module '{e.name}' is not installed.\n\n"
+                "Please install it using:\n"
+                f"pip install {e.name} --break-system-packages"
+            )
+            return
+
         if not shutil.which('tesseract'):
             logger.error("Tesseract binary not found in PATH")
-            dialog = Adw.AlertDialog.new(
+            self.show_error_and_quit(
                 "Missing Dependency",
                 "Tesseract OCR is not installed.\n\nPlease install it to use Spider OCR:\nsudo apt install tesseract-ocr"
             )
-            dialog.add_response("close", "Close")
-            dialog.set_default_response("close")
-            dialog.connect("response", lambda *_: self.quit())
-            dialog.present()
             return
 
         logger.info("Application activated")
@@ -32,6 +42,13 @@ class SpiderApplication(Adw.Application):
             logger.info("Creating new SpiderWindow")
             self.win = SpiderWindow(application=self)
         self.win.present()
+
+    def show_error_and_quit(self, title, message):
+        dialog = Adw.AlertDialog.new(title, message)
+        dialog.add_response("close", "Close")
+        dialog.set_default_response("close")
+        dialog.connect("response", lambda *_: self.quit())
+        dialog.present()
 
     def do_shutdown(self):
         logger.info("Application shutting down...")

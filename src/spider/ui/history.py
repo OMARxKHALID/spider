@@ -42,7 +42,7 @@ class HistoryView(Gtk.Box):
         provider.load_from_data(css)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         
-        self.refresh()
+        GLib.idle_add(self.refresh)
 
     def refresh(self, query=None):
         logger.info("Refreshing history list (query: %s)", query)

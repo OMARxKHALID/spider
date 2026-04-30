@@ -36,6 +36,22 @@ chmod +x install.sh
 ./builddir/org.domain.Spider
 ```
 
+## Installers
+
+You can package Spider into various installer formats for easier distribution:
+
+### Flatpak (Modern GNOME Standard)
+Recommended for Linux users. It bundles all dependencies in a sandbox.
+```bash
+flatpak-builder --user --install --force-clean build-dir build-aux/org.domain.Spider.json
+```
+
+### Debian Package (.deb)
+Traditional installer for Ubuntu, Debian, and Linux Mint.
+```bash
+./package-deb.sh
+```
+
 ## :tada: Support
 If you like Spider and you want to support its development, you can support me on GitHub:
 

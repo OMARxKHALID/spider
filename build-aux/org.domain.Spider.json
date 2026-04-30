@@ -1,0 +1,60 @@
+{
+    "app-id": "org.domain.Spider",
+    "runtime": "org.gnome.Platform",
+    "runtime-version": "46",
+    "sdk": "org.gnome.Sdk",
+    "command": "org.domain.Spider",
+    "finish-args": [
+        "--share=ipc",
+        "--socket=fallback-x11",
+        "--socket=wayland",
+        "--device=dri",
+        "--share=network",
+        "--filesystem=home"
+    ],
+    "modules": [
+        {
+            "name": "python3-dependencies",
+            "buildsystem": "simple",
+            "build-commands": [
+                "pip3 install --prefix=/app pytesseract Pillow opencv-python-headless"
+            ]
+        },
+        {
+            "name": "tesseract",
+            "cleanup": [ "/bin/tesseract" ],
+            "modules": [
+                {
+                    "name": "leptonica",
+                    "sources": [
+                        {
+                            "type": "archive",
+                            "url": "https://github.com/DanBloomberg/leptonica/releases/download/1.84.1/leptonica-1.84.1.tar.gz",
+                            "sha256": "808605333f273574889c162f4e0c0366b2a472a149c4f74d08112b322a304e2f"
+                        }
+                    ]
+                },
+                {
+                    "name": "tesseract-ocr",
+                    "sources": [
+                        {
+                            "type": "archive",
+                            "url": "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.3.4.tar.gz",
+                            "sha256": "0383187123985ec567f139d4b297a70e7e17c0df4a09848529342f06742a033b"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "spider",
+            "buildsystem": "meson",
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": ".."
+                }
+            ]
+        }
+    ]
+}

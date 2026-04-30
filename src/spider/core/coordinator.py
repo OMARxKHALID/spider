@@ -15,8 +15,7 @@ class PipelineCoordinator:
     def __init__(self, app_window):
         self.window = app_window
         self.portal = PortalCapture()
-        self.ocr_engine = TesseractEngine()
-        self.ocr_engine.load_model("eng")
+        self.ocr_engine = None
         self.db = DatabaseManager()
         self._pipeline_event = threading.Event()
         self._cancel_event = threading.Event()
@@ -85,6 +84,10 @@ class PipelineCoordinator:
 
             if self._cancel_event.is_set():
                 raise TimeoutError("Pipeline aborted: safety timeout reached")
+
+            if self.ocr_engine is None:
+                self.ocr_engine = TesseractEngine()
+                self.ocr_engine.load_model("eng")
 
             result = self.ocr_engine.recognize(processed_img)
             result.image_bytes = image_bytes

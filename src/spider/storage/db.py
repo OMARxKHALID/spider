@@ -40,64 +40,56 @@ class DatabaseManager:
         SCHEMA_VERSION = 1
 
         cur = conn.cursor()
-        cur.execute("PRAGMA user_version")
-        version = cur.fetchone()[0]
-
-        if version < SCHEMA_VERSION:
-            # Run migrations here as version increments
-            # e.g. if version < 2: conn.execute("ALTER TABLE history ADD COLUMN foo TEXT")
-            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            conn.commit()
-
-        cursor = conn.cursor()
         try:
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS history (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp   REAL    NOT NULL,
-                    text        TEXT    NOT NULL,
-                    image_blob  BLOB,
-                    engine_used TEXT    NOT NULL,
-                    language    TEXT    NOT NULL DEFAULT 'eng',
-                    confidence  REAL
-                )
-            """)
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp)")
-            
-            cursor.execute("SELECT sql FROM sqlite_master WHERE name='history_fts'")
-            existing_sql = cursor.fetchone()
-            if existing_sql and 'trigram' not in existing_sql[0].lower():
-                cursor.execute("DROP TABLE IF EXISTS history_fts")
+            cur.execute("PRAGMA user_version")
+            version = cur.fetchone()[0]
 
-            cursor.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS history_fts USING fts5(
-                    text,
-                    content='history',
-                    content_rowid='id',
-                    tokenize='trigram'
-                )
-            """)
+            if version < SCHEMA_VERSION:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS history (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp   REAL    NOT NULL,
+                        text        TEXT    NOT NULL,
+                        image_blob  BLOB,
+                        engine_used TEXT    NOT NULL,
+                        language    TEXT    NOT NULL DEFAULT 'eng',
+                        confidence  REAL
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp)")
+                
+                cur.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS history_fts USING fts5(
+                        text,
+                        content='history',
+                        content_rowid='id',
+                        tokenize='trigram'
+                    )
+                """)
+                
+                cur.execute("SELECT count(*) FROM history_fts")
+                if cur.fetchone()[0] == 0:
+                    cur.execute("INSERT OR IGNORE INTO history_fts(rowid, text) SELECT id, text FROM history")
+                
+                cur.execute("""
+                    CREATE TRIGGER IF NOT EXISTS history_ai AFTER INSERT ON history BEGIN
+                        INSERT INTO history_fts(rowid, text) VALUES (new.id, new.text);
+                    END
+                """)
+                cur.execute("""
+                    CREATE TRIGGER IF NOT EXISTS history_ad AFTER DELETE ON history BEGIN
+                        INSERT INTO history_fts(history_fts, rowid, text)
+                        VALUES ('delete', old.id, old.text);
+                    END
+                """)
+                
+                cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                conn.commit()
             
-            cursor.execute("INSERT OR IGNORE INTO history_fts(rowid, text) SELECT id, text FROM history")
-            
-            cursor.execute("DROP TRIGGER IF EXISTS history_ai")
-            cursor.execute("""
-                CREATE TRIGGER history_ai AFTER INSERT ON history BEGIN
-                    INSERT INTO history_fts(rowid, text) VALUES (new.id, new.text);
-                END
-            """)
-            
-            cursor.execute("DROP TRIGGER IF EXISTS history_ad")
-            cursor.execute("""
-                CREATE TRIGGER history_ad AFTER DELETE ON history BEGIN
-                    INSERT INTO history_fts(history_fts, rowid, text)
-                    VALUES ('delete', old.id, old.text);
-                END
-            """)
-            conn.commit()
+            # Ensure WAL mode is always set
+            cur.execute("PRAGMA journal_mode=WAL")
         finally:
-            cursor.close()
+            cur.close()
             conn.close()
 
     def _sanitize_fts_query(self, query: str) -> str:
