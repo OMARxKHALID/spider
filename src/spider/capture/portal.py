@@ -1,7 +1,5 @@
 import uuid
 import os
-import urllib.parse
-import tempfile
 from gi.repository import Gio, GLib
 import logging
 
@@ -12,17 +10,16 @@ class PortalCapture:
         try:
             self.connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         except Exception as e:
-            logger.error("Failed to connect to Session Bus: %s", e)
+            logger.error("Capture: Failed to connect to Session Bus: %s", e)
             self.connection = None
         
     def capture_interactive(self, callback):
         if not self.connection:
-            logger.error("No DBus connection available")
+            logger.error("Capture: No DBus connection available")
             callback(None)
             return
 
         token = "spider_" + str(uuid.uuid4()).replace("-", "")
-        
         ctx = {
             "sub_id": 0,
             "callback": callback,
@@ -30,8 +27,7 @@ class PortalCapture:
             "completed": False
         }
         
-        logger.info("Initiation: Calling Screenshot portal method...")
-        
+        logger.info("Capture: Initiating screenshot portal request")
         self.connection.call(
             "org.freedesktop.portal.Desktop",
             "/org/freedesktop/portal/desktop",
@@ -68,10 +64,10 @@ class PortalCapture:
                 self._on_response,
                 ctx
             )
-            logger.info("Portal call successful. Watching handle: %s", handle)
+            logger.info("Capture: Portal request accepted, handle: %s", handle)
             
         except Exception as e:
-            logger.error("Error calling screenshot portal: %s", e)
+            logger.error("Capture: Portal call failed: %s", e)
             if not ctx["completed"]:
                 ctx["completed"] = True
                 ctx["callback"](None)
@@ -99,42 +95,26 @@ class PortalCapture:
             if uri_var:
                 uri = uri_var.get_string()
                 file_path = Gio.File.new_for_uri(uri).get_path()
+                
                 if file_path is None:
-                    logger.error("Portal returned an unresolvable URI: %s", uri)
-                    ctx["callback"](None)
-                    return
-
-                def _is_safe_path(base: str, target: str) -> bool:
-                    try:
-                        return os.path.commonpath([base, target]) == base
-                    except ValueError:
-                        return False
-
-                real_file_path = os.path.realpath(file_path)
-                allowed_prefixes = (
-                    GLib.get_tmp_dir(),
-                    GLib.get_user_runtime_dir(),
-                    os.path.expanduser("~"),
-                )
-                if not any(_is_safe_path(p, real_file_path) for p in allowed_prefixes):
-                    logger.error("Portal returned suspicious path: %s", real_file_path)
+                    logger.error("Capture: Portal returned unresolvable URI: %s", uri)
                     ctx["callback"](None)
                     return
 
                 try:
-                    image_bytes = None
-                    try:
-                        with open(file_path, "rb") as f:
-                            image_bytes = f.read()
-                    finally:
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
+                    logger.info("Capture: Reading portal image from %s", file_path)
+                    with open(file_path, "rb") as f:
+                        image_bytes = f.read()
+                    
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
 
                     ctx["callback"](image_bytes)
                 except Exception as e:
-                    logger.error("Error reading screenshot file: %s", e)
+                    logger.error("Capture: Failed to read screenshot file: %s", e)
                     ctx["callback"](None)
             else:
                 ctx["callback"](None)
         else:
+            logger.info("Capture: User cancelled portal request")
             ctx["callback"](None)

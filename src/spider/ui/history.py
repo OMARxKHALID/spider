@@ -8,15 +8,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 class HistoryView(Gtk.Box):
-    def __init__(self, db_manager, **kwargs):
+    def __init__(self, db_manager, on_item_selected=None, **kwargs):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12, **kwargs)
         self.db = db_manager
+        self.on_item_selected = on_item_selected
         
         self.search_bar = Gtk.SearchEntry(placeholder_text="Search history...")
         self.search_bar.connect("search-changed", self._on_search_changed)
         
         self._search_timeout_id = 0
-        
         self.stack = Gtk.Stack()
         
         self.empty_page = Adw.StatusPage()
@@ -27,6 +27,8 @@ class HistoryView(Gtk.Box):
         self.list_box = Gtk.ListBox()
         self.list_box.add_css_class("boxed-list")
         self.list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.list_box.set_activate_on_single_click(True)
+        self.list_box.connect("row-activated", self._on_row_activated)
         
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_vexpand(True)
@@ -34,10 +36,9 @@ class HistoryView(Gtk.Box):
         
         self.stack.add_named(self.empty_page, "empty")
         self.stack.add_named(scrolled, "list")
-        
         self.append(self.stack)
         
-        css = b"row .delete-button { opacity: 0; } row:hover .delete-button { opacity: 1; }"
+        css = b"row .delete-button { opacity: 0; transition: opacity 0.2s; } row:hover .delete-button { opacity: 1; }"
         provider = Gtk.CssProvider()
         provider.load_from_data(css)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -45,7 +46,7 @@ class HistoryView(Gtk.Box):
         GLib.idle_add(self.refresh)
 
     def refresh(self, query=None):
-        logger.info("Refreshing history list (query: %s)", query)
+        logger.info("UI: Refreshing history list (query: %s)", query)
         while (child := self.list_box.get_first_child()):
             self.list_box.remove(child)
             
@@ -62,6 +63,9 @@ class HistoryView(Gtk.Box):
 
         for item in items:
             row = Adw.ActionRow()
+            row.set_activatable(True)
+            row._item_data = item
+            
             escaped_text = GLib.markup_escape_text(item['text'][:100])
             row.set_title(escaped_text + ("..." if len(item['text']) > 100 else ""))
             
@@ -84,6 +88,10 @@ class HistoryView(Gtk.Box):
             
             self.list_box.append(row)
 
+    def _on_row_activated(self, list_box, row):
+        if self.on_item_selected and hasattr(row, "_item_data"):
+            self.on_item_selected(row._item_data)
+
     def _relative_time(self, dt):
         now = datetime.datetime.now()
         diff = now - dt
@@ -104,7 +112,6 @@ class HistoryView(Gtk.Box):
     def _on_search_changed(self, entry):
         if self._search_timeout_id:
             GLib.source_remove(self._search_timeout_id)
-        
         self._search_timeout_id = GLib.timeout_add(300, self._do_search, entry.get_text())
 
     def _do_search(self, query):
@@ -113,17 +120,16 @@ class HistoryView(Gtk.Box):
         return False
 
     def _on_copy_clicked(self, button, text):
-        logger.info("Historical item copy requested")
+        logger.info("UI: Copying historical item to clipboard")
         self.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(text))
-
         root = self.get_root()
         if hasattr(root, "add_toast"):
             root.add_toast("Copied to clipboard")
 
     def _on_delete_clicked(self, button, item_id):
+        logger.info("UI: Deleting historical item %d", item_id)
         self.db.delete_result(item_id)
         self.refresh(self.search_bar.get_text())
-        
         root = self.get_root()
         if hasattr(root, "add_toast"):
             root.add_toast("Item deleted")

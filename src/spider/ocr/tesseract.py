@@ -14,11 +14,12 @@ class TesseractEngine(OcrEngine):
         self.lang = "eng"
 
     def load_model(self, lang: str) -> bool:
-        logger.info("Loading Tesseract model for language: %s", lang)
+        logger.info("OCR: Loading language model '%s'", lang)
         self.lang = lang
         return True
 
     def recognize(self, image: np.ndarray) -> OCRResult:
+        logger.info("OCR: Starting Tesseract recognition")
         start_time = time.time()
 
         if len(image.shape) == 2:
@@ -26,13 +27,20 @@ class TesseractEngine(OcrEngine):
         else:
             pil_img = Image.fromarray(image[:, :, ::-1])
 
-        data = pytesseract.image_to_data(
-            pil_img,
-            lang=self.lang,
-            config='--psm 11',
-            timeout=30,
-            output_type=pytesseract.Output.DICT
-        )
+        psm_mode = 3 
+        logger.info("OCR: Configuration - PSM %d, Lang '%s'", psm_mode, self.lang)
+        
+        try:
+            data = pytesseract.image_to_data(
+                pil_img,
+                lang=self.lang,
+                config=f'--psm {psm_mode}',
+                timeout=30,
+                output_type=pytesseract.Output.DICT
+            )
+        except Exception as e:
+            logger.error("OCR: Tesseract failed: %s", e)
+            raise
 
         conf_list = [int(c) for c in data['conf'] if int(c) != -1]
         avg_conf = (sum(conf_list) / len(conf_list)) / 100.0 if conf_list else 0.0
@@ -44,8 +52,12 @@ class TesseractEngine(OcrEngine):
         ]
         text = " ".join(words)
 
-        logger.info("Recognition: OCR complete in %.2fs (Words: %d, Confidence: %.2f)", 
-                    time.time() - start_time, len(words), avg_conf)
+        elapsed = time.time() - start_time
+        logger.info("OCR: Finished in %.2fs", elapsed)
+        logger.info("OCR: Detected %d words with %.2f%% average confidence", len(words), avg_conf * 100)
+        
+        if not text.strip():
+            logger.warning("OCR: No text was detected")
 
         return OCRResult(
             text=text.strip(),

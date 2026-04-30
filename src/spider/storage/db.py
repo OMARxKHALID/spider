@@ -23,7 +23,6 @@ class DatabaseManager:
     @property
     def connection(self):
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            logger.debug("Creating new database connection for thread: %s", threading.current_thread().name)
             conn = sqlite3.connect(self.db_path, check_same_thread=False)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.row_factory = sqlite3.Row
@@ -38,13 +37,13 @@ class DatabaseManager:
     def _init_db(self):
         conn = sqlite3.connect(self.db_path)
         SCHEMA_VERSION = 1
-
         cur = conn.cursor()
         try:
             cur.execute("PRAGMA user_version")
             version = cur.fetchone()[0]
 
             if version < SCHEMA_VERSION:
+                logger.info("DB: Initializing database schema (v%d)", SCHEMA_VERSION)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS history (
                         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,7 +85,6 @@ class DatabaseManager:
                 cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 conn.commit()
             
-            # Ensure WAL mode is always set
             cur.execute("PRAGMA journal_mode=WAL")
         finally:
             cur.close()
@@ -100,6 +98,7 @@ class DatabaseManager:
         return " ".join(terms)
 
     def save_result(self, result: OCRResult):
+        logger.info("DB: Saving OCR result (%d characters)", len(result.text))
         conn = self.connection
         cursor = conn.cursor()
         try:
@@ -134,6 +133,7 @@ class DatabaseManager:
         if not clean_query:
             return []
 
+        logger.info("DB: Searching history for query: '%s'", query)
         conn = self.connection
         cursor = conn.cursor()
         try:
@@ -150,6 +150,7 @@ class DatabaseManager:
             cursor.close()
 
     def clear_history(self):
+        logger.info("DB: Purging all history")
         conn = self.connection
         cursor = conn.cursor()
         try:

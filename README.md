@@ -1,6 +1,6 @@
 # Spider OCR
 
-> Intuitive text extraction tool (OCR) for GNOME.
+> Intuitive and high-performance text extraction tool (OCR) for GNOME.
 
 <div align="center">
 <figure>
@@ -11,19 +11,33 @@
 Quickly extract text from almost any source: YouTube, screencasts, PDFs, webpages, photos, etc.  
 Grab the image and get the text.
 
-Spider OCR is a premium, high-performance desktop application for Linux designed to capture regions of your screen and instantly extract text using advanced OCR engines. Built with **GTK4** and **Libadwaita**, it offers a native, modern experience with a focus on speed and stability.
+Spider OCR is a premium desktop application for Linux designed to capture regions of your screen and instantly extract text using an optimized vision pipeline. Built with **GTK4** and **Libadwaita**, it offers a native, modern experience with a focus on speed and stability.
 
-## See it in action
+## ✨ Features
+* **Interactive Capture**: Grab any part of your screen using standard GNOME Portals.
+* **Smart Pre-processing**: Built-in vision pipeline (Upscaling, CLAHE, Sharpness) to improve accuracy on small or complex text.
+* **History Management**: Automatically save your captures with a searchable, high-performance local history (FTS5).
+* **Modern UI**: Sleek interface that respects your system theme and auto-hides during capture.
+* **Instant Startup**: Optimized architecture for a premium, lag-free feel.
 
-<div align="center">
-<img src="data/screenshot.png" alt="Spider window" />
-</div>
+## 📦 Installation (Ubuntu / Zorin / Debian)
+1. Download the `spider_0.1.0_amd64.deb` from the latest release assets.
+2. Open your terminal in the download folder and run:
+   ```bash
+   sudo dpkg -i spider_0.1.0_amd64.deb
+   ```
+3. If dependencies are missing, run:
+   ```bash
+   sudo apt install -f
+   ```
 
-## Get Spider
+### 🐍 Troubleshooting Dependencies
+If you encounter missing Python modules on startup, ensure the core libraries are installed:
+```bash
+sudo apt install tesseract-ocr python3-pytesseract python3-pil python3-opencv
+```
 
-Spider OCR currently supports building from source.
-
-### Manual Build
+## 🛠️ Manual Build
 ```bash
 git clone https://github.com/OMARxKHALID/spider.git
 cd spider
@@ -36,18 +50,15 @@ chmod +x install.sh
 ./builddir/org.domain.Spider
 ```
 
-## Installers
+## 🏗️ Packaging
+You can package Spider into various installer formats:
 
-You can package Spider into various installer formats for easier distribution:
-
-### Flatpak (Modern GNOME Standard)
-Recommended for Linux users. It bundles all dependencies in a sandbox.
+### Flatpak
 ```bash
 flatpak-builder --user --install --force-clean build-dir build-aux/org.domain.Spider.json
 ```
 
 ### Debian Package (.deb)
-Traditional installer for Ubuntu, Debian, and Linux Mint.
 ```bash
 ./package-deb.sh
 ```
@@ -57,19 +68,5 @@ If you like Spider and you want to support its development, you can support me o
 
 <a href="https://github.com/OMARxKHALID/spider" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Support" style="height: 60px !important;width: 217px !important;" ></a>
 
-## Building
-
-I recommend using [GNOME Builder](https://wiki.gnome.org/Apps/Builder) to develop and build the application.
-To build the Spider application, just open the project folder in Builder and press **Run** (Ctrl+F5). It will automatically handle dependencies and environment setup.
-
-## Code of Conduct
-
-Spider OCR follows the GNOME project [Code of Conduct](https://gitlab.gnome.org/World/amberol/-/blob/main/code-of-conduct.md). All communications in project spaces are expected to follow it.
-
-## Contribution
-
-Any help is appreciated! Feel free to open issues or pull requests.
-
 ## Thanks
-
 Special thanks to the open-source community for the powerful tools (Tesseract, OpenCV, Libadwaita) that make this project possible.

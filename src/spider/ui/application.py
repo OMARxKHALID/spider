@@ -15,31 +15,29 @@ class SpiderApplication(Adw.Application):
         self.win = None
 
     def do_activate(self):
+        logger.info("App: Application activated")
         try:
             import pytesseract
             import PIL
             import cv2
         except ImportError as e:
-            logger.error(f"Missing Python dependency: {e.name}")
+            logger.error("App: Missing dependency: %s", e.name)
             self.show_error_and_quit(
                 "Missing Dependencies",
-                f"The required Python module '{e.name}' is not installed.\n\n"
-                "Please install it using:\n"
-                f"pip install {e.name} --break-system-packages"
+                f"Required Python module '{e.name}' is not installed.\n\nPlease install it to continue."
             )
             return
 
         if not shutil.which('tesseract'):
-            logger.error("Tesseract binary not found in PATH")
+            logger.error("App: Tesseract binary not found in PATH")
             self.show_error_and_quit(
                 "Missing Dependency",
-                "Tesseract OCR is not installed.\n\nPlease install it to use Spider OCR:\nsudo apt install tesseract-ocr"
+                "Tesseract OCR is not installed.\n\nPlease install it (e.g., sudo apt install tesseract-ocr)."
             )
             return
 
-        logger.info("Application activated")
         if not self.win:
-            logger.info("Creating new SpiderWindow")
+            logger.info("App: Creating main window")
             self.win = SpiderWindow(application=self)
         self.win.present()
 
@@ -51,8 +49,7 @@ class SpiderApplication(Adw.Application):
         dialog.present()
 
     def do_shutdown(self):
-        logger.info("Application shutting down...")
+        logger.info("App: Shutting down")
         if self.win and hasattr(self.win, 'coordinator'):
             self.win.coordinator.shutdown()
         Gio.Application.do_shutdown(self)
-

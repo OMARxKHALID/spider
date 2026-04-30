@@ -16,9 +16,12 @@ def main():
         format='[%(asctime)s] %(levelname)s [%(name)s] %(message)s',
         datefmt='%H:%M:%S'
     )
-    logger.info("--- Spider OCR Startup ---")
-    logger.info("Python version: %s", sys.version.split()[0])
-    logger.info("GTK version: %d.%d.%d", Gtk.get_major_version(), Gtk.get_minor_version(), Gtk.get_micro_version())
+    logger.info("App: Starting Spider OCR")
+    logger.info("App: Python %s, GTK %d.%d.%d", 
+                sys.version.split()[0], 
+                Gtk.get_major_version(), 
+                Gtk.get_minor_version(), 
+                Gtk.get_micro_version())
     Adw.init()
     
     app = SpiderApplication(application_id="org.domain.Spider", flags=Gio.ApplicationFlags.FLAGS_NONE)

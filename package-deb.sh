@@ -20,12 +20,11 @@ Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
-Depends: python3, python3-gi, python3-pil, python3-opencv, tesseract-ocr, libadwaita-1-0, gir1.2-adw-1, gir1.2-gtk-4.0
+Depends: python3, python3-gi, python3-pil, python3-opencv, python3-pytesseract, tesseract-ocr, libadwaita-1-0, gir1.2-adw-1, gir1.2-gtk-4.0
 Maintainer: Omar Khalid <omarxkhalid@github.com>
 Description: Intuitive text extraction tool (OCR) for GNOME.
  Spider OCR captures regions of your screen and instantly extracts text 
  using advanced OCR engines. Built with GTK4 and Libadwaita.
- Note: requires 'pytesseract' python package (install via pip if not present).
 EOF
 
 cat <<EOF > "$DEB_DIR/DEBIAN/postinst"

@@ -33,19 +33,19 @@ class PipelineCoordinator:
 
     def start_capture_flow(self):
         if self.is_busy:
-            logger.warning("Pipeline already busy; ignoring request")
+            logger.warning("Core: Pipeline busy, ignoring request")
             return
 
         self._pipeline_event.set()
         self._cancel_event.clear()
-        logger.info("Initiation: Starting capture flow")
+        logger.info("Core: Starting capture flow")
         self._start_timeout()
         self.portal.capture_interactive(self._on_capture_complete)
 
     def _safety_unlock(self):
         self._timeout_id = 0
         if self._pipeline_event.is_set():
-            logger.warning("Pipeline timeout: task still running, UI notified")
+            logger.warning("Core: Pipeline timeout reached")
             self._cancel_event.set()
             self._pipeline_event.clear()
             if hasattr(self.window, "add_toast"):
@@ -65,25 +65,25 @@ class PipelineCoordinator:
             if self._timeout_id:
                 GLib.source_remove(self._timeout_id)
                 self._timeout_id = 0
-            logger.warning("Capture failed or cancelled")
+            logger.warning("Core: Capture cancelled or failed")
             self._pipeline_event.clear()
             GLib.idle_add(self._reset_ui_state)
             return
 
-        logger.info("Acquisition: Image received (%d bytes)", len(image_bytes))
+        logger.info("Core: Image acquisition complete (%d bytes)", len(image_bytes))
         self._worker_thread = threading.Thread(target=self._run_pipeline, args=(image_bytes,), daemon=False)
         self._worker_thread.start()
 
     def _run_pipeline(self, image_bytes):
-        logger.info("Pre-Processing: Starting vision pipeline")
+        logger.info("Core: Starting processing pipeline")
         try:
             if self._cancel_event.is_set():
-                raise TimeoutError("Pipeline aborted: safety timeout reached")
+                raise TimeoutError("Pipeline aborted: timeout")
 
             processed_img = Preprocessor.process_image(image_bytes)
 
             if self._cancel_event.is_set():
-                raise TimeoutError("Pipeline aborted: safety timeout reached")
+                raise TimeoutError("Pipeline aborted: timeout")
 
             if self.ocr_engine is None:
                 self.ocr_engine = TesseractEngine()
@@ -93,14 +93,15 @@ class PipelineCoordinator:
             result.image_bytes = image_bytes
 
             if self._cancel_event.is_set():
-                raise TimeoutError("Pipeline aborted: safety timeout reached")
+                raise TimeoutError("Pipeline aborted: timeout")
 
             if result.text and result.text.strip():
+                logger.info("Core: Saving results to database")
                 self.db.save_result(result)
 
             GLib.idle_add(self._on_pipeline_finished, result)
         except Exception as e:
-            logger.error("Pipeline Worker Error: %s", e)
+            logger.error("Core: Pipeline error: %s", e)
             GLib.idle_add(self._on_pipeline_error, str(e))
         finally:
             self._pipeline_event.clear()
@@ -113,7 +114,7 @@ class PipelineCoordinator:
         if self._timeout_id:
             GLib.source_remove(self._timeout_id)
             self._timeout_id = 0
-        logger.info("Delivery: Pipeline complete")
+        logger.info("Core: Pipeline execution complete")
         if hasattr(self.window, "show_result"):
             self.window.show_result(result)
         return False
@@ -124,7 +125,6 @@ class PipelineCoordinator:
         if self._timeout_id:
             GLib.source_remove(self._timeout_id)
             self._timeout_id = 0
-        logger.error("Pipeline failed: %s", error_msg)
         self._reset_ui_state()
         if hasattr(self.window, "add_toast"):
             self.window.add_toast(f"Error: {error_msg}")
@@ -139,6 +139,6 @@ class PipelineCoordinator:
 
     def shutdown(self):
         if self._worker_thread and self._worker_thread.is_alive():
-            logger.info("Waiting for worker thread to finish...")
+            logger.info("Core: Waiting for worker thread...")
             self._worker_thread.join(timeout=5.0)
         self.db.close()
