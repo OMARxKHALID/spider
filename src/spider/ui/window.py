@@ -7,23 +7,20 @@ import os
 
 logger = logging.getLogger(__name__)
 
-from spider.core.coordinator import PipelineCoordinator
-from spider.ui.history import HistoryView
-
 class SpiderWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         logger.info("UI: Initializing main window")
+        
+        from spider.core.coordinator import PipelineCoordinator
         self.coordinator = PipelineCoordinator(self)
 
         self.set_title("Spider")
         self.set_default_size(800, 600)
 
-        icon_theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-        icon_path = os.path.join(base_dir, "data")
-        if os.path.exists(os.path.join(icon_path, "org.domain.Spider.png")):
-            icon_theme.add_search_path(icon_path)
+        self._history_view = None
+        self._history_page = None
+        self._result_page = None
 
         self.toast_overlay = Adw.ToastOverlay()
         self.set_content(self.toast_overlay)
@@ -34,11 +31,32 @@ class SpiderWindow(Adw.ApplicationWindow):
         self.home_page = self._create_home_page()
         self.nav_view.push(self.home_page)
 
-        self.history_view = HistoryView(self.coordinator.db, on_item_selected=self._on_history_item_selected)
-        self.history_page = self._create_history_page()
-
-        self.result_page = self._create_result_page()
+        icon_theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        icon_path = os.path.join(base_dir, "data")
+        if os.path.exists(os.path.join(icon_path, "org.domain.Spider.png")):
+            icon_theme.add_search_path(icon_path)
+        
         self._setup_shortcuts()
+
+    @property
+    def history_view(self):
+        if self._history_view is None:
+            from spider.ui.history import HistoryView
+            self._history_view = HistoryView(self.coordinator.db, on_item_selected=self._on_history_item_selected)
+        return self._history_view
+
+    @property
+    def history_page(self):
+        if self._history_page is None:
+            self._history_page = self._create_history_page()
+        return self._history_page
+
+    @property
+    def result_page(self):
+        if self._result_page is None:
+            self._result_page = self._create_result_page()
+        return self._result_page
 
     def _setup_shortcuts(self):
         controller = Gtk.ShortcutController()
@@ -61,7 +79,7 @@ class SpiderWindow(Adw.ApplicationWindow):
 
         copy_trigger = Gtk.ShortcutTrigger.parse_string("<Control>C")
         def do_copy(*_):
-            if self.nav_view.get_visible_page() == self.result_page:
+            if self.nav_view.get_visible_page() == self._result_page:
                 focus_widget = self.get_focus()
                 if focus_widget != self.text_view:
                     self._on_copy_result_clicked(self.copy_btn)
@@ -288,6 +306,8 @@ class SpiderWindow(Adw.ApplicationWindow):
             self.add_toast("No text detected")
             return
 
+        _ = self.result_page 
+
         buffer = self.text_view.get_buffer()
         buffer.set_text(result.text, -1)
 
@@ -300,7 +320,8 @@ class SpiderWindow(Adw.ApplicationWindow):
         if self.nav_view.get_visible_page() != self.result_page:
             self.nav_view.push(self.result_page)
 
-        self.history_view.refresh()
+        if self._history_view:
+            self.history_view.refresh()
 
     def reset_home_title(self):
         self.set_visible(True)
@@ -322,7 +343,8 @@ class SpiderWindow(Adw.ApplicationWindow):
     def _on_clear_history_clicked(self, btn):
         logger.info("UI: Clearing history")
         self.coordinator.db.clear_history()
-        self.history_view.refresh()
+        if self._history_view:
+            self.history_view.refresh()
         self.add_toast("History cleared")
 
     def _on_about_clicked(self, btn):

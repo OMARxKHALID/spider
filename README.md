@@ -68,8 +68,14 @@ flatpak-builder --user --install --force-clean build-dir build-aux/org.domain.Sp
 
 ### Debian Package (.deb)
 
+To build a policy-compliant Debian package:
+
 ```bash
-./package-deb.sh
+# Install build tools
+sudo apt install debhelper dh-python devscripts build-essential
+
+# Build the package
+dpkg-buildpackage -us -uc -b
 ```
 
 ## :tada: Support

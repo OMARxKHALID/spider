@@ -1,28 +1,62 @@
 # Build & Packaging
 builddir/
+build*/
+obj-*/
 deb-build/
 AppDir/
+subprojects/*
+!subprojects/*.wrap
 *.deb
+*.dsc
+*.changes
+*.buildinfo
+*.tar.gz
+*.tar.xz
 *.AppImage
+
+# Debian build artifacts (generated during packaging)
+debian/.debhelper/
+debian/*-stamp
+debian/files
+debian/spider/
+debian/*.substvars
+debian/*.debhelper
+debian/*.log
+debian/*.build
 
 # Python
 .venv/
+dist/
+build/
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.so
 *.egg-info
+*.egg
+MANIFEST
 .pytest_cache/
 .mypy_cache/
 .mesonpy/
+.coverage
+htmlcov/
 
 # Local Data & Logs
 *.db
 *.log
+.env
+.env.*
 
 # IDE & Environment
 .vscode/
 .idea/
 .ipynb_checkpoints/
 .DS_Store
+*.swp
+*.swo
+*~
+.directory
 
 # Miscellaneous
 *.zip

@@ -3,17 +3,15 @@ gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
 import threading
 import logging
-
-from spider.capture.portal import PortalCapture
-from spider.vision.preprocessor import Preprocessor
-from spider.ocr.tesseract import TesseractEngine
-from spider.storage.db import DatabaseManager
+import time
 
 logger = logging.getLogger(__name__)
 
 class PipelineCoordinator:
     def __init__(self, app_window):
         self.window = app_window
+        from spider.capture.portal import PortalCapture
+        from spider.storage.db import DatabaseManager
         self.portal = PortalCapture()
         self.ocr_engine = None
         self.db = DatabaseManager()
@@ -21,10 +19,30 @@ class PipelineCoordinator:
         self._cancel_event = threading.Event()
         self._timeout_id = 0
         self._worker_thread = None
+        
+        GLib.timeout_add_seconds(1, self.warm_up)
 
     @property
     def is_busy(self):
         return self._pipeline_event.is_set()
+
+    def warm_up(self):
+        """Pre-load OCR engine in background to hide init latency."""
+        if self.ocr_engine is None:
+            logger.info("Core: Warming up OCR engine in background")
+            t = threading.Thread(target=self._init_engine, daemon=True)
+            t.start()
+        return False
+
+    def _init_engine(self):
+        try:
+            from spider.ocr.tesseract import TesseractEngine
+            engine = TesseractEngine()
+            engine.load_model("eng")
+            self.ocr_engine = engine
+            logger.info("Core: OCR engine warmed up and ready")
+        except Exception as e:
+            logger.warning("Core: Failed to warm up engine: %s", e)
 
     def _start_timeout(self):
         if self._timeout_id:
@@ -76,6 +94,8 @@ class PipelineCoordinator:
 
     def _run_pipeline(self, image_bytes):
         logger.info("Core: Starting processing pipeline")
+        from spider.vision.preprocessor import Preprocessor
+        
         try:
             if self._cancel_event.is_set():
                 raise TimeoutError("Pipeline aborted: timeout")
@@ -86,6 +106,7 @@ class PipelineCoordinator:
                 raise TimeoutError("Pipeline aborted: timeout")
 
             if self.ocr_engine is None:
+                from spider.ocr.tesseract import TesseractEngine
                 self.ocr_engine = TesseractEngine()
                 self.ocr_engine.load_model("eng")
 
@@ -105,7 +126,7 @@ class PipelineCoordinator:
             GLib.idle_add(self._on_pipeline_error, str(e))
         finally:
             self._pipeline_event.clear()
-            if getattr(self, "db", None):
+            if hasattr(self, "db"):
                 self.db.close()
 
     def _on_pipeline_finished(self, result):

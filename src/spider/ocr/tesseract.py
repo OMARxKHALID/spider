@@ -1,7 +1,4 @@
 import time
-import pytesseract
-from PIL import Image
-import numpy as np
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,7 +15,11 @@ class TesseractEngine(OcrEngine):
         self.lang = lang
         return True
 
-    def recognize(self, image: np.ndarray) -> OCRResult:
+    def recognize(self, image) -> OCRResult:
+        import pytesseract
+        from PIL import Image
+        import numpy as np
+
         logger.info("OCR: Starting Tesseract recognition")
         start_time = time.time()
 
@@ -27,9 +28,9 @@ class TesseractEngine(OcrEngine):
         else:
             pil_img = Image.fromarray(image[:, :, ::-1])
 
-        psm_mode = 3 
+        psm_mode = 3
         logger.info("OCR: Configuration - PSM %d, Lang '%s'", psm_mode, self.lang)
-        
+
         try:
             data = pytesseract.image_to_data(
                 pil_img,
@@ -55,7 +56,7 @@ class TesseractEngine(OcrEngine):
         elapsed = time.time() - start_time
         logger.info("OCR: Finished in %.2fs", elapsed)
         logger.info("OCR: Detected %d words with %.2f%% average confidence", len(words), avg_conf * 100)
-        
+
         if not text.strip():
             logger.warning("OCR: No text was detected")
 

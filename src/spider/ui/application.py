@@ -2,12 +2,15 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, Gio
+
 import logging
 import shutil
 
-from spider.ui.window import SpiderWindow
-
 logger = logging.getLogger(__name__)
+
+def get_spider_window():
+    from spider.ui.window import SpiderWindow
+    return SpiderWindow
 
 class SpiderApplication(Adw.Application):
     def __init__(self, **kwargs):
@@ -16,6 +19,13 @@ class SpiderApplication(Adw.Application):
 
     def do_activate(self):
         logger.info("App: Application activated")
+        
+        if not self.win:
+            logger.info("App: Creating main window")
+            SpiderWindow = get_spider_window()
+            self.win = SpiderWindow(application=self)
+        self.win.present()
+
         try:
             import pytesseract
             import PIL
@@ -35,11 +45,6 @@ class SpiderApplication(Adw.Application):
                 "Tesseract OCR is not installed.\n\nPlease install it (e.g., sudo apt install tesseract-ocr)."
             )
             return
-
-        if not self.win:
-            logger.info("App: Creating main window")
-            self.win = SpiderWindow(application=self)
-        self.win.present()
 
     def show_error_and_quit(self, title, message):
         dialog = Adw.AlertDialog.new(title, message)
