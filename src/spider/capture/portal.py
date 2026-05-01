@@ -24,7 +24,8 @@ class PortalCapture:
             "sub_id": 0,
             "callback": callback,
             "handle": None,
-            "completed": False
+            "completed": False,
+            "timeout_id": None
         }
         
         logger.info("Capture: Initiating screenshot portal request")
@@ -64,6 +65,9 @@ class PortalCapture:
                 self._on_response,
                 ctx
             )
+            ctx["timeout_id"] = GLib.timeout_add_seconds(
+                90, self._on_portal_timeout, ctx
+            )
             logger.info("Capture: Portal request accepted, handle: %s", handle)
             
         except Exception as e:
@@ -72,6 +76,19 @@ class PortalCapture:
                 ctx["completed"] = True
                 ctx["callback"](None)
 
+    def _on_portal_timeout(self, ctx):
+        if not ctx.get("completed"):
+            logger.warning("Capture: Portal request timed out after 90s")
+            ctx["completed"] = True
+            if ctx.get("sub_id"):
+                try:
+                    self.connection.signal_unsubscribe(ctx["sub_id"])
+                except Exception:
+                    pass
+                ctx["sub_id"] = 0
+            ctx["callback"](None)
+        return GLib.SOURCE_REMOVE
+
     def _on_response(self, connection, sender_name, object_path, interface_name, signal_name, parameters, ctx):
         if object_path != ctx["handle"]:
             return
@@ -79,6 +96,10 @@ class PortalCapture:
         if ctx["completed"]:
             return
         ctx["completed"] = True
+
+        if ctx.get("timeout_id"):
+            GLib.source_remove(ctx["timeout_id"])
+            ctx["timeout_id"] = None
 
         if ctx["sub_id"]:
             try:
@@ -106,8 +127,10 @@ class PortalCapture:
                     with open(file_path, "rb") as f:
                         image_bytes = f.read()
                     
-                    if os.path.exists(file_path):
+                    try:
                         os.remove(file_path)
+                    except FileNotFoundError:
+                        pass
 
                     ctx["callback"](image_bytes)
                 except Exception as e:

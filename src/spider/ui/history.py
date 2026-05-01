@@ -7,7 +7,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_HISTORY_CSS = "row .delete-button { opacity: 0; transition: opacity 0.2s; } row:hover .delete-button { opacity: 1; }"
+
 class HistoryView(Gtk.Box):
+    _css_loaded = False
+
     def __init__(self, db_manager, on_item_selected=None, **kwargs):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12, **kwargs)
         self.db = db_manager
@@ -38,12 +42,20 @@ class HistoryView(Gtk.Box):
         self.stack.add_named(scrolled, "list")
         self.append(self.stack)
         
-        css = b"row .delete-button { opacity: 0; transition: opacity 0.2s; } row:hover .delete-button { opacity: 1; }"
-        provider = Gtk.CssProvider()
-        provider.load_from_data(css)
-        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        
+        self._load_css()
         GLib.idle_add(self.refresh)
+
+    @classmethod
+    def _load_css(cls):
+        if cls._css_loaded:
+            return
+        provider = Gtk.CssProvider()
+        provider.load_from_string(_HISTORY_CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        cls._css_loaded = True
 
     def refresh(self, query=None):
         logger.info("UI: Refreshing history list (query: %s)", query)
@@ -64,7 +76,7 @@ class HistoryView(Gtk.Box):
         for item in items:
             row = Adw.ActionRow()
             row.set_activatable(True)
-            row._item_data = item
+            row._item = item
             
             escaped_text = GLib.markup_escape_text(item['text'][:100])
             row.set_title(escaped_text + ("..." if len(item['text']) > 100 else ""))
@@ -75,6 +87,9 @@ class HistoryView(Gtk.Box):
             copy_btn = Gtk.Button(icon_name="edit-copy-symbolic")
             copy_btn.add_css_class("flat")
             copy_btn.set_tooltip_text("Copy Text")
+            copy_btn.update_property(
+                [Gtk.AccessibleProperty.LABEL], ["Copy Text"]
+            )
             copy_btn.connect("clicked", self._on_copy_clicked, item['text'])
             row.add_suffix(copy_btn)
 
@@ -83,14 +98,18 @@ class HistoryView(Gtk.Box):
             del_btn.add_css_class("error")
             del_btn.add_css_class("delete-button")
             del_btn.set_tooltip_text("Delete Item")
+            del_btn.update_property(
+                [Gtk.AccessibleProperty.LABEL], ["Delete Item"]
+            )
             del_btn.connect("clicked", self._on_delete_clicked, item['id'])
             row.add_suffix(del_btn)
             
             self.list_box.append(row)
 
     def _on_row_activated(self, list_box, row):
-        if self.on_item_selected and hasattr(row, "_item_data"):
-            self.on_item_selected(row._item_data)
+        item = getattr(row, "_item", None)
+        if self.on_item_selected and item:
+            self.on_item_selected(item)
 
     def _relative_time(self, dt):
         now = datetime.datetime.now()

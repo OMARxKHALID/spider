@@ -29,13 +29,14 @@ class TesseractEngine(OcrEngine):
             pil_img = Image.fromarray(image[:, :, ::-1])
 
         psm_mode = 3
-        logger.info("OCR: Configuration - PSM %d, Lang '%s'", psm_mode, self.lang)
+        config = f'--oem 1 --psm {psm_mode} -c preserve_interword_spaces=1'
+        logger.info("OCR: Configuration - %s, Lang '%s'", config, self.lang)
 
         try:
             data = pytesseract.image_to_data(
                 pil_img,
                 lang=self.lang,
-                config=f'--psm {psm_mode}',
+                config=config,
                 timeout=30,
                 output_type=pytesseract.Output.DICT
             )
@@ -43,25 +44,36 @@ class TesseractEngine(OcrEngine):
             logger.error("OCR: Tesseract failed: %s", e)
             raise
 
-        conf_list = [int(c) for c in data['conf'] if int(c) != -1]
+        conf_list = [c for c in (int(v) for v in data['conf']) if c != -1]
         avg_conf = (sum(conf_list) / len(conf_list)) / 100.0 if conf_list else 0.0
 
-        words = [
-            data['text'][i]
-            for i in range(len(data['text']))
-            if int(data['conf'][i]) > 0 and data['text'][i].strip()
-        ]
-        text = " ".join(words)
+        lines = {}
+        for i in range(len(data['text'])):
+            conf = int(data['conf'][i])
+            word = data['text'][i]
+            if conf > 0 and word.strip():
+                key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
+                lines.setdefault(key, []).append(word)
 
+        paragraphs = {}
+        for (block, par, line), words in sorted(lines.items()):
+            paragraphs.setdefault((block, par), []).append(" ".join(words))
+
+        text = "\n\n".join(
+            "\n".join(par_lines)
+            for _, par_lines in sorted(paragraphs.items())
+        ).strip()
+
+        word_count = sum(len(ws) for ws in lines.values())
         elapsed = time.time() - start_time
         logger.info("OCR: Finished in %.2fs", elapsed)
-        logger.info("OCR: Detected %d words with %.2f%% average confidence", len(words), avg_conf * 100)
+        logger.info("OCR: Detected %d words with %.2f%% average confidence", word_count, avg_conf * 100)
 
-        if not text.strip():
+        if not text:
             logger.warning("OCR: No text was detected")
 
         return OCRResult(
-            text=text.strip(),
+            text=text,
             confidence=avg_conf,
             engine_used="tesseract",
             timestamp=start_time,

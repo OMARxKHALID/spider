@@ -19,6 +19,8 @@ class PipelineCoordinator:
         self._cancel_event = threading.Event()
         self._timeout_id = 0
         self._worker_thread = None
+        self._engine_lock = threading.RLock()
+        self._run_generation = 0
         
         GLib.timeout_add_seconds(1, self.warm_up)
 
@@ -30,19 +32,22 @@ class PipelineCoordinator:
         """Pre-load OCR engine in background to hide init latency."""
         if self.ocr_engine is None:
             logger.info("Core: Warming up OCR engine in background")
-            t = threading.Thread(target=self._init_engine, daemon=True)
-            t.start()
+            self._warmup_thread = threading.Thread(target=self._init_engine, daemon=True)
+            self._warmup_thread.start()
         return False
 
     def _init_engine(self):
-        try:
-            from spider.ocr.tesseract import TesseractEngine
-            engine = TesseractEngine()
-            engine.load_model("eng")
-            self.ocr_engine = engine
-            logger.info("Core: OCR engine warmed up and ready")
-        except Exception as e:
-            logger.warning("Core: Failed to warm up engine: %s", e)
+        with self._engine_lock:
+            if self.ocr_engine is not None:
+                return
+            try:
+                from spider.ocr.tesseract import TesseractEngine
+                engine = TesseractEngine()
+                engine.load_model("eng")
+                self.ocr_engine = engine
+                logger.info("Core: OCR engine warmed up and ready")
+            except Exception as e:
+                logger.warning("Core: Failed to warm up engine: %s", e)
 
     def _start_timeout(self):
         if self._timeout_id:
@@ -56,7 +61,8 @@ class PipelineCoordinator:
 
         self._pipeline_event.set()
         self._cancel_event.clear()
-        logger.info("Core: Starting capture flow")
+        self._run_generation += 1
+        logger.info("Core: Starting capture flow (gen %d)", self._run_generation)
         self._start_timeout()
         self.portal.capture_interactive(self._on_capture_complete)
 
@@ -75,6 +81,7 @@ class PipelineCoordinator:
             return
         self._pipeline_event.set()
         self._cancel_event.clear()
+        self._run_generation += 1
         self._start_timeout()
         self._on_capture_complete(image_bytes)
 
@@ -89,11 +96,12 @@ class PipelineCoordinator:
             return
 
         logger.info("Core: Image acquisition complete (%d bytes)", len(image_bytes))
-        self._worker_thread = threading.Thread(target=self._run_pipeline, args=(image_bytes,), daemon=False)
+        run_id = self._run_generation
+        self._worker_thread = threading.Thread(target=self._run_pipeline, args=(image_bytes, run_id), daemon=False)
         self._worker_thread.start()
 
-    def _run_pipeline(self, image_bytes):
-        logger.info("Core: Starting processing pipeline")
+    def _run_pipeline(self, image_bytes, run_id):
+        logger.info("Core: Starting processing pipeline (gen %d)", run_id)
         from spider.vision.preprocessor import Preprocessor
         
         try:
@@ -105,12 +113,13 @@ class PipelineCoordinator:
             if self._cancel_event.is_set():
                 raise TimeoutError("Pipeline aborted: timeout")
 
-            if self.ocr_engine is None:
-                from spider.ocr.tesseract import TesseractEngine
-                self.ocr_engine = TesseractEngine()
-                self.ocr_engine.load_model("eng")
+            with self._engine_lock:
+                engine = self.ocr_engine
+                if engine is None:
+                    self._init_engine()
+                    engine = self.ocr_engine
 
-            result = self.ocr_engine.recognize(processed_img)
+            result = engine.recognize(processed_img)
             result.image_bytes = image_bytes
 
             if self._cancel_event.is_set():
@@ -120,17 +129,17 @@ class PipelineCoordinator:
                 logger.info("Core: Saving results to database")
                 self.db.save_result(result)
 
-            GLib.idle_add(self._on_pipeline_finished, result)
+            GLib.idle_add(self._on_pipeline_finished, result, run_id)
         except Exception as e:
             logger.error("Core: Pipeline error: %s", e)
-            GLib.idle_add(self._on_pipeline_error, str(e))
+            GLib.idle_add(self._on_pipeline_error, str(e), run_id)
         finally:
             self._pipeline_event.clear()
-            if hasattr(self, "db"):
-                self.db.close()
 
-    def _on_pipeline_finished(self, result):
+    def _on_pipeline_finished(self, result, run_id):
         if self.window is None or self.window.get_root() is None:
+            return GLib.SOURCE_REMOVE
+        if run_id != self._run_generation:
             return GLib.SOURCE_REMOVE
         if self._timeout_id:
             GLib.source_remove(self._timeout_id)
@@ -138,10 +147,12 @@ class PipelineCoordinator:
         logger.info("Core: Pipeline execution complete")
         if hasattr(self.window, "show_result"):
             self.window.show_result(result)
-        return False
+        return GLib.SOURCE_REMOVE
 
-    def _on_pipeline_error(self, error_msg):
+    def _on_pipeline_error(self, error_msg, run_id):
         if self.window is None or self.window.get_root() is None:
+            return GLib.SOURCE_REMOVE
+        if run_id != self._run_generation:
             return GLib.SOURCE_REMOVE
         if self._timeout_id:
             GLib.source_remove(self._timeout_id)
@@ -149,16 +160,17 @@ class PipelineCoordinator:
         self._reset_ui_state()
         if hasattr(self.window, "add_toast"):
             self.window.add_toast(f"Error: {error_msg}")
-        return False
+        return GLib.SOURCE_REMOVE
 
     def _reset_ui_state(self):
         if self.window is None or self.window.get_root() is None:
             return GLib.SOURCE_REMOVE
         if hasattr(self.window, "reset_home_title"):
             self.window.reset_home_title()
-        return False
+        return GLib.SOURCE_REMOVE
 
     def shutdown(self):
+        self._cancel_event.set()
         if self._worker_thread and self._worker_thread.is_alive():
             logger.info("Core: Waiting for worker thread...")
             self._worker_thread.join(timeout=5.0)

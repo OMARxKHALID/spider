@@ -1,9 +1,54 @@
 import logging
 import time
+import os
 
 logger = logging.getLogger(__name__)
 
 class Preprocessor:
+    DEBUG_PREPROCESSOR = os.environ.get('SPIDER_DEBUG_PREPROCESS') == '1'
+
+    @staticmethod
+    def _debug_save(stage: str, image):
+        if not Preprocessor.DEBUG_PREPROCESSOR:
+            return
+        import tempfile
+        import cv2
+        path = os.path.join(tempfile.gettempdir(), f"spider_preprocess_{stage}.png")
+        cv2.imwrite(path, image)
+        logger.debug("Preprocessor stage '%s' saved to %s", stage, path)
+
+    @staticmethod
+    def _binarize(gray):
+        import cv2
+        std = gray.std()
+        
+        if std > 80:
+            _, binary = cv2.threshold(
+                gray, 0, 255,
+                cv2.THRESH_BINARY + cv2.THRESH_OTSU
+            )
+            return binary
+        
+        elif std > 30:
+            h, w = gray.shape[:2]
+            block = max(11, (w // 20) | 1)
+            block = min(block, 51)
+            binary = cv2.adaptiveThreshold(
+                gray, 255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                blockSize=block,
+                C=2
+            )
+            return binary
+        
+        else:
+            _, binary = cv2.threshold(
+                gray, 0, 255,
+                cv2.THRESH_BINARY + cv2.THRESH_OTSU
+            )
+            return binary
+
     @staticmethod
     def process_image(image_bytes: bytes):
         import cv2
@@ -20,31 +65,57 @@ class Preprocessor:
         h, w = image.shape[:2]
         logger.info("Vision: Input dimensions %dx%d", w, h)
 
-        if w < 1000 or h < 1000:
-            scale = 2.0
+        SCREEN_DPI = 96
+        TARGET_DPI = 300
+        scale_factor = TARGET_DPI / SCREEN_DPI
+
+        min_dim = min(h, w)
+        if min_dim < 300:
+            scale = max(scale_factor, 600.0 / min_dim)
+            scale = min(scale, 4.0)
+        elif w < 2000 or h < 2000:
+            scale = scale_factor
+        else:
+            scale = 1.0
+
+        if scale > 1.0:
             image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
             new_h, new_w = image.shape[:2]
             logger.info("Vision: Upscaled image to %dx%d (factor: %.2f)", new_w, new_h, scale)
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        Preprocessor._debug_save("01_grayscale", gray)
+        
         gray = Preprocessor.deskew(gray)
+        Preprocessor._debug_save("02_deskewed", gray)
+
+        kernel = np.array([[0,-1,0], [-1,5,-1], [0,-1,0]])
+        gray = cv2.filter2D(gray, -1, kernel)
+        Preprocessor._debug_save("03_sharpened", gray)
+
+        gray = cv2.medianBlur(gray, 3)
+        Preprocessor._debug_save("04_denoised", gray)
 
         std_val = gray.std()
-        mean_val = gray.mean()
-
         if std_val < 50:
             logger.info("Vision: Low contrast detected, applying CLAHE")
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             gray = clahe.apply(gray)
+        Preprocessor._debug_save("05_clahe", gray)
 
-        if mean_val < 115:
+        if gray.mean() < 115:
             logger.info("Vision: Dark background detected, inverting colors")
             gray = cv2.bitwise_not(gray)
+        Preprocessor._debug_save("06_inverted", gray)
 
-        gray = cv2.medianBlur(gray, 3)
+        gray = Preprocessor._binarize(gray)
+        Preprocessor._debug_save("07_binarized", gray)
 
-        kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-        gray = cv2.filter2D(gray, -1, kernel)
+        gray = cv2.copyMakeBorder(
+            gray, 10, 10, 10, 10,
+            cv2.BORDER_CONSTANT, value=255
+        )
+        Preprocessor._debug_save("08_padded", gray)
 
         logger.info("Vision: Preprocessing complete")
         return gray

@@ -11,7 +11,15 @@ venv_python = os.path.abspath(os.path.join(script_dir, '..', '.venv', 'bin', 'py
 if os.path.exists(venv_python) and os.path.abspath(sys.executable) != venv_python:
     os.execl(venv_python, venv_python, *sys.argv)
 
-# 2. Add package to path
+# 2. Set TESSDATA_PREFIX for Flatpak and installed environments
+tessdata = os.path.join(
+    os.environ.get('FLATPAK_DEST', '/usr'),
+    'share', 'tessdata'
+)
+if os.path.isdir(tessdata):
+    os.environ.setdefault('TESSDATA_PREFIX', tessdata)
+
+# 3. Add package to path
 rel_datadir = os.path.abspath(os.path.join(script_dir, '..', 'share', 'spider'))
 if os.path.exists(rel_datadir):
     sys.path.insert(0, rel_datadir)

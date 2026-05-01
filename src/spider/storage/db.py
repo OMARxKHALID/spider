@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import re
 import threading
 from typing import List, Optional
 from spider.core.models import OCRResult
@@ -14,6 +15,7 @@ class DatabaseManager:
                                  os.path.join(os.path.expanduser('~'), '.local', 'share'))
             data_dir = os.path.join(xdg_data, 'spider')
             os.makedirs(data_dir, exist_ok=True)
+            os.chmod(data_dir, 0o700)
             db_path = os.path.join(data_dir, "history.db")
         
         self.db_path = db_path
@@ -36,7 +38,7 @@ class DatabaseManager:
 
     def _init_db(self):
         conn = sqlite3.connect(self.db_path)
-        SCHEMA_VERSION = 1
+        SCHEMA_VERSION = 2
         cur = conn.cursor()
         try:
             cur.execute("PRAGMA user_version")
@@ -81,6 +83,14 @@ class DatabaseManager:
                         VALUES ('delete', old.id, old.text);
                     END
                 """)
+                cur.execute("""
+                    CREATE TRIGGER IF NOT EXISTS history_au AFTER UPDATE ON history BEGIN
+                        INSERT INTO history_fts(history_fts, rowid, text)
+                            VALUES ('delete', old.id, old.text);
+                        INSERT INTO history_fts(rowid, text)
+                            VALUES (new.id, new.text);
+                    END
+                """)
                 
                 cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 conn.commit()
@@ -91,10 +101,8 @@ class DatabaseManager:
             conn.close()
 
     def _sanitize_fts_query(self, query: str) -> str:
-        query = query.strip()
-        for char in '"*:^()':
-            query = query.replace(char, ' ')
-        terms = [f'"{term}"' for term in query.split() if term]
+        clean = re.sub(r'[^\w\s]', ' ', query, flags=re.UNICODE)
+        terms = [f'"{t}"' for t in clean.split() if t]
         return " ".join(terms)
 
     def save_result(self, result: OCRResult):
@@ -107,6 +115,13 @@ class DatabaseManager:
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (result.timestamp, result.text, result.image_bytes, result.engine_used, result.language, result.confidence)
             )
+            
+            cursor.execute("""
+                DELETE FROM history WHERE id NOT IN (
+                    SELECT id FROM history ORDER BY timestamp DESC LIMIT 500
+                )
+            """)
+            
             conn.commit()
             return cursor.lastrowid
         finally:
@@ -155,6 +170,8 @@ class DatabaseManager:
         cursor = conn.cursor()
         try:
             cursor.execute("DELETE FROM history")
+            cursor.execute("INSERT INTO history_fts(history_fts) VALUES('delete-all')")
+            cursor.execute("INSERT INTO history_fts(history_fts) VALUES('rebuild')")
             conn.commit()
         finally:
             cursor.close()

@@ -3,6 +3,8 @@ builddir/
 build*/
 obj-*/
 deb-build/
+.flatpak-builder/
+build-dir/
 AppDir/
 subprojects/*
 !subprojects/*.wrap

@@ -21,6 +21,11 @@ class SpiderWindow(Adw.ApplicationWindow):
         self._history_view = None
         self._history_page = None
         self._result_page = None
+        self.text_view = None
+        self.copy_btn = None
+        self.stats_label = None
+        self.result_title = None
+        self._file_dialog = None
 
         self.toast_overlay = Adw.ToastOverlay()
         self.set_content(self.toast_overlay)
@@ -31,12 +36,6 @@ class SpiderWindow(Adw.ApplicationWindow):
         self.home_page = self._create_home_page()
         self.nav_view.push(self.home_page)
 
-        icon_theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-        icon_path = os.path.join(base_dir, "data")
-        if os.path.exists(os.path.join(icon_path, "org.domain.Spider.png")):
-            icon_theme.add_search_path(icon_path)
-        
         self._setup_shortcuts()
 
     @property
@@ -79,7 +78,7 @@ class SpiderWindow(Adw.ApplicationWindow):
 
         copy_trigger = Gtk.ShortcutTrigger.parse_string("<Control>C")
         def do_copy(*_):
-            if self.nav_view.get_visible_page() == self._result_page:
+            if self._result_page is not None and self.nav_view.get_visible_page() == self._result_page:
                 focus_widget = self.get_focus()
                 if focus_widget != self.text_view:
                     self._on_copy_result_clicked(self.copy_btn)
@@ -123,11 +122,17 @@ class SpiderWindow(Adw.ApplicationWindow):
 
         history_btn = Gtk.Button(icon_name="document-open-recent-symbolic")
         history_btn.set_tooltip_text("History")
+        history_btn.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["View History"]
+        )
         history_btn.connect("clicked", lambda x: self.nav_view.push(self.history_page))
         header_bar.pack_start(history_btn)
 
         about_btn = Gtk.Button(icon_name="help-about-symbolic")
         about_btn.set_tooltip_text("About")
+        about_btn.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["About Spider"]
+        )
         about_btn.connect("clicked", self._on_about_clicked)
         header_bar.pack_end(about_btn)
 
@@ -182,10 +187,17 @@ class SpiderWindow(Adw.ApplicationWindow):
 
         new_cap_btn = Gtk.Button(icon_name="camera-photo-symbolic")
         new_cap_btn.set_tooltip_text("New Capture")
+        new_cap_btn.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["New Capture"]
+        )
         new_cap_btn.connect("clicked", self.on_capture_clicked)
         header_bar.pack_end(new_cap_btn)
 
         self.copy_btn = Gtk.Button(icon_name="edit-copy-symbolic")
+        self.copy_btn.set_tooltip_text("Copy Text")
+        self.copy_btn.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["Copy Text"]
+        )
         self.copy_btn.connect("clicked", self._on_copy_result_clicked)
         header_bar.pack_end(self.copy_btn)
 
@@ -205,10 +217,16 @@ class SpiderWindow(Adw.ApplicationWindow):
 
         search_btn = Gtk.ToggleButton(icon_name="system-search-symbolic")
         search_btn.set_tooltip_text("Search History")
+        search_btn.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["Search History"]
+        )
         header_bar.pack_start(search_btn)
 
         clear_btn = Gtk.Button(icon_name="edit-clear-all-symbolic")
         clear_btn.set_tooltip_text("Clear All")
+        clear_btn.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["Clear All History"]
+        )
         clear_btn.add_css_class("error")
         clear_btn.connect("clicked", self._on_clear_history_clicked)
         header_bar.pack_end(clear_btn)
@@ -250,8 +268,8 @@ class SpiderWindow(Adw.ApplicationWindow):
 
     def on_open_clicked(self, button):
         logger.info("UI: Open image requested")
-        dialog = Gtk.FileDialog.new()
-        dialog.set_title("Open Image")
+        self._file_dialog = Gtk.FileDialog.new()
+        self._file_dialog.set_title("Open Image")
 
         filters = Gio.ListStore.new(Gtk.FileFilter)
         image_filter = Gtk.FileFilter()
@@ -260,32 +278,43 @@ class SpiderWindow(Adw.ApplicationWindow):
         image_filter.add_mime_type("image/jpeg")
         image_filter.add_mime_type("image/tiff")
         filters.append(image_filter)
-        dialog.set_filters(filters)
+        self._file_dialog.set_filters(filters)
 
-        dialog.open(self, None, self._on_file_open_done)
+        self._file_dialog.open(self, None, self._on_file_open_done)
 
     def _on_file_open_done(self, dialog, result):
         try:
             file = dialog.open_finish(result)
-            if file:
-                path = file.get_path()
-                logger.info("UI: Opening local image: %s", path)
-                with open(path, "rb") as f:
-                    image_bytes = f.read()
-
-                self.add_toast("Processing Image...")
-                self._home_status_page.set_title("Processing...")
-                self.coordinator.process_image(image_bytes)
+        except GLib.Error as e:
+            if e.code == 2:
+                return
+            logger.error("UI: File dialog error: %s", e.message)
+            self.add_toast(f"Failed to open: {e.message}")
+            return
         except Exception as e:
             logger.error("UI: Failed to open image: %s", e)
             self.add_toast(f"Failed to open image: {str(e)}")
+            return
+
+        if file:
+            path = file.get_path()
+            logger.info("UI: Opening local image: %s", path)
+            try:
+                with open(path, "rb") as f:
+                    image_bytes = f.read()
+                self.add_toast("Processing Image...")
+                self._home_status_page.set_title("Processing...")
+                self.coordinator.process_image(image_bytes)
+            except Exception as e:
+                logger.error("UI: Failed to read image: %s", e)
+                self.add_toast(f"Failed to read image: {str(e)}")
 
     def _on_history_item_selected(self, item):
         logger.info("UI: Historical item selected: %d", item['id'])
         from spider.core.models import OCRResult
         result = OCRResult(
             text=item['text'],
-            confidence=item['confidence'] or 0.0,
+            confidence=item['confidence'] if item['confidence'] is not None else 0.0,
             engine_used=item['engine_used'],
             timestamp=item['timestamp'],
             language=item['language']

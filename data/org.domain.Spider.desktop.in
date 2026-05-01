@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Spider
 Comment=Extract text from images
-Exec=/usr/bin/org.domain.Spider
+Exec=org.domain.Spider
 Icon=org.domain.Spider
 Terminal=false
 Type=Application

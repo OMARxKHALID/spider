@@ -8,9 +8,7 @@
         "--share=ipc",
         "--socket=fallback-x11",
         "--socket=wayland",
-        "--device=dri",
-        "--share=network",
-        "--filesystem=home"
+        "--device=dri"
     ],
     "modules": [
         {
@@ -22,7 +20,6 @@
         },
         {
             "name": "tesseract",
-            "cleanup": [ "/bin/tesseract" ],
             "modules": [
                 {
                     "name": "leptonica",
@@ -43,6 +40,20 @@
                             "sha256": "0383187123985ec567f139d4b297a70e7e17c0df4a09848529342f06742a033b"
                         }
                     ]
+                }
+            ]
+        },
+        {
+            "name": "tessdata",
+            "buildsystem": "simple",
+            "build-commands": [
+                "install -Dm644 eng.traineddata /app/share/tessdata/eng.traineddata"
+            ],
+            "sources": [
+                {
+                    "type": "file",
+                    "url": "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata",
+                    "sha256": "daa0c97d651c19fba3b25e81317f482d67b9e8eb8a27fdf34a75cfc8f682a03b"
                 }
             ]
         },

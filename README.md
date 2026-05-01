@@ -1,89 +1,70 @@
-# Spider
+# <img src="data/org.domain.Spider.png" width="48" align="center"> Spider 🕷️
 
-> Intuitive and high-performance text extraction tool (OCR) for GNOME.
+![Screenshot](data/screenshot.png)
 
-<div align="center">
-<figure>
-<img src="data/org.domain.Spider.png" width="128" alt="Spider logo" />
-</figure>
-</div>
+A fast, lightweight, and modern desktop OCR tool for Linux built with Python, GTK4, Libadwaita, and Tesseract. Spider enables you to instantly extract text from screen regions or image files with offline processing and high accuracy.
 
-Quickly extract text from almost any source: YouTube, screencasts, PDFs, webpages, photos, etc.
-Grab the image and get the text.
+## Features
 
-Spider OCR is a premium desktop application for Linux designed to capture regions of your screen and instantly extract text using an optimized vision pipeline. Built with **GTK4** and **Libadwaita**, it offers a native, modern experience with a focus on speed and stability.
+- **Region Capture:** Instantly grab a portion of your screen (X11 & Wayland supported via XDG Desktop Portals).
+- **Offline OCR:** Powered entirely by Tesseract OCR — all processing happens locally. No internet connection required.
+- **Image Preprocessing:** Smart OpenCV pipelines automatically upscale small text, deskew, enhance contrast, and detect dark mode to achieve >95% accuracy.
+- **Searchable History:** All captured text is saved locally into a blazing-fast SQLite FTS5 database, capped at 500 records to preserve storage.
+- **Accessibility & HIG Compliant:** Full GTK4/Libadwaita integration ensuring dark mode support, Wayland safety, and screen reader compatibility.
 
-## ✨ Features
+---
 
-- **Interactive Capture**: Grab any part of your screen using standard GNOME Portals.
-- **Smart Pre-processing**: Built-in vision pipeline (Upscaling, CLAHE, Sharpness) to improve accuracy on small or complex text.
-- **History Management**: Automatically save your captures with a searchable, high-performance local history (FTS5).
-- **Modern UI**: Sleek interface that respects your system theme and auto-hides during capture.
-- **Instant Startup**: Optimized architecture for a premium, lag-free feel.
+## Installation
 
-## 📦 Installation (Ubuntu / Zorin / Debian)
+### Dependencies
 
-1. Download the `spider_0.1.0_amd64.deb` from the latest release assets.
-2. Open your terminal in the download folder and run:
-   ```bash
-   sudo dpkg -i spider_0.1.0_amd64.deb
-   ```
-3. If dependencies are missing, run:
-   ```bash
-   sudo apt install -f
-   ```
+Ensure you have the following system dependencies installed:
 
-### 🐍 Troubleshooting Dependencies
+- `tesseract-ocr` and English language data (`tesseract-ocr-eng`)
+- `python3` (>=3.10)
+- `libgtk-4-dev`, `libadwaita-1-dev`
+- OpenCV Python and PyGObject (`python3-gi`, `python3-opencv`)
 
-If you encounter missing Python modules on startup, ensure the core libraries are installed:
+### Installing from Source (Meson)
 
 ```bash
-sudo apt install tesseract-ocr python3-pytesseract python3-pil python3-opencv
+git clone https://github.com/omar/spider-ocr.git
+cd spider-ocr
+meson setup build
+meson compile -C build
+sudo meson install -C build
 ```
-
-## 🛠️ Manual Build
-
-```bash
-git clone https://github.com/OMARxKHALID/spider.git
-cd spider
-chmod +x install.sh
-./install.sh
-```
-
-### Launch
-
-```bash
-./builddir/org.domain.Spider
-```
-
-## 🏗️ Packaging
-
-You can package Spider into various installer formats:
 
 ### Flatpak
 
+A Flatpak manifest is provided in `build-aux/org.domain.Spider.json`.
+
 ```bash
 flatpak-builder --user --install --force-clean build-dir build-aux/org.domain.Spider.json
+flatpak run org.domain.Spider
 ```
 
-### Debian Package (.deb)
+_Note: For production Flatpak builds, it is highly recommended to run `flatpak-pip-generator` to pin Python dependencies into a deterministic `python3-deps.json` module._
 
-To build a policy-compliant Debian package:
+---
 
-```bash
-# Install build tools
-sudo apt install debhelper dh-python devscripts build-essential
+## Technical Details
 
-# Build the package
-dpkg-buildpackage -us -uc -b
-```
+### Smart Preprocessing
 
-## :tada: Support
+Spider doesn't just pass images to Tesseract. It runs an intelligent pipeline:
 
-If you like Spider and you want to support its development, you can support me on GitHub:
+1. Adaptive DPI upscaling.
+2. Deskewing to fix angled captures.
+3. Sharpening and Denoising.
+4. Intelligent Binarization: Adaptive Gaussian thresholding for gradients, or Otsu's method depending on the image's standard deviation.
 
-<a href="https://github.com/OMARxKHALID/spider" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Support" style="height: 60px !important;width: 217px !important;" ></a>
+### Storage & Security
 
-## Thanks
+Data is stored locally under `~/.local/share/spider/history.db` with strict `0700` permissions. The UI performs non-blocking asynchronous reads/writes and maintains a generation-counter to safely ignore stale Wayland UI callbacks.
 
-Special thanks to the open-source community for the powerful tools (Tesseract, OpenCV, Libadwaita) that make this project possible.
+---
+
+## License
+
+Spider is released under the MIT License.

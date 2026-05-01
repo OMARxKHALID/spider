@@ -26,6 +26,12 @@ if [[ -d "deb-build" ]]; then
     rm -rf deb-build/
 fi
 
+info "Removing temporary packaging files..."
+if [[ -d "/tmp/spider-deb" ]]; then
+    rm -rf /tmp/spider-deb
+fi
+rm -f spider_*.deb
+
 if [[ -d ".venv" ]]; then
     info "Removing virtual environment (.venv/)..."
     rm -rf .venv/
@@ -35,7 +41,19 @@ info "Purging Python cache files..."
 find . -type d -name "__pycache__" -exec rm -rf {} +
 rm -rf .pytest_cache/
 rm -rf .mypy_cache/
+rm -f .coverage
+rm -rf .cache/
 find . -type d -name "*.egg-info" -exec rm -rf {} +
+
+info "Removing other build artifacts..."
+rm -rf obj-x86_64-linux-gnu/
+if [[ -d "debian" ]]; then
+    rm -rf debian/.debhelper/
+    rm -f debian/files
+    rm -f debian/*.substvars
+    rm -f debian/*.debhelper
+    rm -rf debian/spider/
+fi
 
 success "Codebase caches cleared successfully!"
 echo "Run ./install.sh to rebuild the environment."
