@@ -1,0 +1,31 @@
+Source: spider
+Section: utils
+Priority: optional
+Maintainer: Omar Khalid <omarxkhalid@github.com>
+Build-Depends: debhelper-compat (= 13),
+               meson,
+               ninja-build,
+               pkg-config,
+               python3,
+               libgirepository1.0-dev,
+               libcairo2-dev,
+               libadwaita-1-dev,
+               dh-python
+Standards-Version: 4.6.2
+Homepage: https://github.com/OMARxKHALID/spider
+
+Package: spider
+Architecture: any
+Depends: ${python3:Depends},
+         ${misc:Depends},
+         ${shlibs:Depends},
+         tesseract-ocr,
+         python3-gi,
+         python3-pil,
+         python3-opencv,
+         libadwaita-1-0,
+         gir1.2-adw-1,
+         gir1.2-gtk-4.0
+Description: Intuitive text extraction tool (OCR) for GNOME.
+ Spider captures regions of your screen and instantly extracts text
+ using advanced OCR engines. Built with GTK4 and Libadwaita.

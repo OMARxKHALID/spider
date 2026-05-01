@@ -1,0 +1,6 @@
+spider (0.1.0) unstable; urgency=medium
+
+  * Initial release.
+  * Ported build system to official Debian debhelper standards.
+
+ -- Omar Khalid <omarxkhalid@github.com>  Fri, 01 May 2026 13:38:00 +0500
