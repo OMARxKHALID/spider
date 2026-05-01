@@ -11,7 +11,7 @@ info() { printf "${CYAN}${BOLD}==>${NC} ${BOLD}%s${NC}\n" "$1"; }
 success() { printf "${GREEN}${BOLD}==>${NC} ${BOLD}%s${NC}\n" "$1"; }
 error() { printf "${RED}${BOLD}Error:${NC} %s\n" "$1"; exit 1; }
 
-info "Spider OCR: Starting Build"
+info "Spider: Starting Build"
 
 info "Checking for core dependencies..."
 deps=(python3 meson ninja-build tesseract-ocr pkg-config libgirepository1.0-dev libcairo2-dev)
@@ -45,7 +45,7 @@ info "Compiling..."
 meson compile -C builddir
 
 echo ""
-success "Spider OCR is ready!"
+success "Spider is ready!"
 printf "  Launch:  ${BOLD}./builddir/org.domain.Spider${NC}\n"
 printf "  Install: ${BOLD}sudo meson install -C builddir${NC}\n"
 echo "WARNING: Launcher is tied to this build path. Do not move the project directory."

@@ -16,7 +16,7 @@ class SpiderWindow(Adw.ApplicationWindow):
         logger.info("UI: Initializing main window")
         self.coordinator = PipelineCoordinator(self)
 
-        self.set_title("Spider OCR")
+        self.set_title("Spider")
         self.set_default_size(800, 600)
 
         icon_theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
@@ -100,7 +100,7 @@ class SpiderWindow(Adw.ApplicationWindow):
 
         toolbar_view = Adw.ToolbarView()
         header_bar = Adw.HeaderBar()
-        self.home_title = Adw.WindowTitle(title="Spider OCR")
+        self.home_title = Adw.WindowTitle(title="Spider")
         header_bar.set_title_widget(self.home_title)
 
         history_btn = Gtk.Button(icon_name="document-open-recent-symbolic")
@@ -117,7 +117,7 @@ class SpiderWindow(Adw.ApplicationWindow):
         toolbar_view.set_content(status_page)
 
         page = Adw.NavigationPage.new(toolbar_view, "home")
-        page.set_title("Spider OCR")
+        page.set_title("Spider")
         self._home_status_page = status_page
         return page
 
@@ -327,7 +327,7 @@ class SpiderWindow(Adw.ApplicationWindow):
 
     def _on_about_clicked(self, btn):
         about = Adw.AboutDialog.new()
-        about.set_application_name("Spider OCR")
+        about.set_application_name("Spider")
         about.set_application_icon("org.domain.Spider")
         about.set_developer_name("omarxkhalid")
         about.set_version("0.1.0")

@@ -11,7 +11,7 @@ info() { printf "${CYAN}${BOLD}==>${NC} ${BOLD}%s${NC}\n" "$1"; }
 success() { printf "${GREEN}${BOLD}==>${NC} ${BOLD}%s${NC}\n" "$1"; }
 error() { printf "${RED}${BOLD}Error:${NC} %s\n" "$1"; exit 1; }
 
-info "Spider OCR: Cleaning Codebase Caches"
+info "Spider: Cleaning Codebase Caches"
 
 # Change to the script's directory
 cd "$(dirname "$0")"

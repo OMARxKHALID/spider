@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=Spider OCR
+Name=Spider
 Comment=Extract text from images
 Exec=/usr/bin/org.domain.Spider
 Icon=org.domain.Spider

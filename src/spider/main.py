@@ -16,7 +16,7 @@ def main():
         format='[%(asctime)s] %(levelname)s [%(name)s] %(message)s',
         datefmt='%H:%M:%S'
     )
-    logger.info("App: Starting Spider OCR")
+    logger.info("App: Starting Spider")
     logger.info("App: Python %s, GTK %d.%d.%d", 
                 sys.version.split()[0], 
                 Gtk.get_major_version(), 
