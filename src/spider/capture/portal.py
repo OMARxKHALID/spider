@@ -12,7 +12,7 @@ class PortalCapture:
         except Exception as e:
             logger.error("Capture: Failed to connect to Session Bus: %s", e)
             self.connection = None
-        
+
     def capture_interactive(self, callback):
         if not self.connection:
             logger.error("Capture: No DBus connection available")
@@ -27,7 +27,7 @@ class PortalCapture:
             "completed": False,
             "timeout_id": None
         }
-        
+
         logger.info("Capture: Initiating screenshot portal request")
         self.connection.call(
             "org.freedesktop.portal.Desktop",
@@ -54,12 +54,12 @@ class PortalCapture:
             res = conn.call_finish(result)
             handle = res.get_child_value(0).get_string()
             ctx["handle"] = handle
-            
+
             ctx["sub_id"] = self.connection.signal_subscribe(
                 "org.freedesktop.portal.Desktop",
                 "org.freedesktop.portal.Request",
                 "Response",
-                None,
+                handle,
                 None,
                 Gio.DBusSignalFlags.NONE,
                 self._on_response,
@@ -69,7 +69,7 @@ class PortalCapture:
                 90, self._on_portal_timeout, ctx
             )
             logger.info("Capture: Portal request accepted, handle: %s", handle)
-            
+
         except Exception as e:
             logger.error("Capture: Portal call failed: %s", e)
             if not ctx["completed"]:
@@ -107,16 +107,16 @@ class PortalCapture:
             except Exception:
                 pass
             ctx["sub_id"] = 0
-            
+
         response_code = parameters.get_child_value(0).get_uint32()
         results = parameters.get_child_value(1)
-        
+
         if response_code == 0:
             uri_var = results.lookup_value("uri", GLib.VariantType("s"))
             if uri_var:
                 uri = uri_var.get_string()
                 file_path = Gio.File.new_for_uri(uri).get_path()
-                
+
                 if file_path is None:
                     logger.error("Capture: Portal returned unresolvable URI: %s", uri)
                     ctx["callback"](None)
@@ -126,16 +126,15 @@ class PortalCapture:
                     logger.info("Capture: Reading portal image from %s", file_path)
                     with open(file_path, "rb") as f:
                         image_bytes = f.read()
-                    
-                    try:
-                        os.remove(file_path)
-                    except FileNotFoundError:
-                        pass
-
                     ctx["callback"](image_bytes)
                 except Exception as e:
                     logger.error("Capture: Failed to read screenshot file: %s", e)
                     ctx["callback"](None)
+                finally:
+                    try:
+                        os.remove(file_path)
+                    except (FileNotFoundError, PermissionError):
+                        pass
             else:
                 ctx["callback"](None)
         else:

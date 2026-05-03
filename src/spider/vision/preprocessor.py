@@ -18,9 +18,10 @@ class Preprocessor:
         logger.debug("Preprocessor stage '%s' saved to %s", stage, path)
 
     @staticmethod
-    def _binarize(gray):
+    def _binarize(gray, std=None):
         import cv2
-        std = gray.std()
+        if std is None:
+            std = gray.std()
         
         if std > 80:
             _, binary = cv2.threshold(
@@ -108,7 +109,7 @@ class Preprocessor:
             gray = cv2.bitwise_not(gray)
         Preprocessor._debug_save("06_inverted", gray)
 
-        gray = Preprocessor._binarize(gray)
+        gray = Preprocessor._binarize(gray, std_val)
         Preprocessor._debug_save("07_binarized", gray)
 
         gray = cv2.copyMakeBorder(

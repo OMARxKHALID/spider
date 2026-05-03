@@ -18,3 +18,7 @@ install_data('org.domain.Spider.png',
 install_data('org.domain.Spider.metainfo.xml',
   install_dir: join_paths(get_option('datadir'), 'metainfo')
 )
+
+gnome.compile_schemas(
+  depend_files: 'org.domain.Spider.gschema.xml'
+)

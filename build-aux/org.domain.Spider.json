@@ -8,14 +8,15 @@
         "--share=ipc",
         "--socket=fallback-x11",
         "--socket=wayland",
-        "--device=dri"
+        "--device=dri",
+        "--talk-name=org.freedesktop.secrets"
     ],
     "modules": [
         {
             "name": "python3-dependencies",
             "buildsystem": "simple",
             "build-commands": [
-                "pip3 install --prefix=/app pytesseract Pillow opencv-python-headless"
+                "pip3 install --prefix=/app pytesseract==0.3.10 Pillow==10.0.0 opencv-python-headless==4.8.0.76"
             ]
         },
         {

@@ -1,5 +1,6 @@
 import time
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -9,18 +10,23 @@ from spider.core.models import OCRResult
 class TesseractEngine(OcrEngine):
     def __init__(self):
         self.lang = "eng"
+        self.psm = 3
 
     def load_model(self, lang: str) -> bool:
         logger.info("OCR: Loading language model '%s'", lang)
         self.lang = lang
         return True
 
+    def configure(self, config: dict[str, Any]) -> None:
+        if "psm" in config:
+            self.psm = config["psm"]
+
     def recognize(self, image) -> OCRResult:
         import pytesseract
         from PIL import Image
         import numpy as np
 
-        logger.info("OCR: Starting Tesseract recognition")
+        logger.info("OCR: Starting Tesseract recognition (PSM %d)", self.psm)
         start_time = time.time()
 
         if len(image.shape) == 2:
@@ -28,8 +34,7 @@ class TesseractEngine(OcrEngine):
         else:
             pil_img = Image.fromarray(image[:, :, ::-1])
 
-        psm_mode = 3
-        config = f'--oem 1 --psm {psm_mode} -c preserve_interword_spaces=1'
+        config = f'--oem 1 --psm {self.psm} -c preserve_interword_spaces=1'
         logger.info("OCR: Configuration - %s, Lang '%s'", config, self.lang)
 
         try:
@@ -44,7 +49,7 @@ class TesseractEngine(OcrEngine):
             logger.error("OCR: Tesseract failed: %s", e)
             raise
 
-        conf_list = [c for c in (int(v) for v in data['conf']) if c != -1]
+        conf_list = [int(v) for v in data['conf'] if int(v) != -1]
         avg_conf = (sum(conf_list) / len(conf_list)) / 100.0 if conf_list else 0.0
 
         lines = {}

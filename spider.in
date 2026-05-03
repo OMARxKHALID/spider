@@ -11,7 +11,13 @@ venv_python = os.path.abspath(os.path.join(script_dir, '..', '.venv', 'bin', 'py
 if os.path.exists(venv_python) and os.path.abspath(sys.executable) != venv_python:
     os.execl(venv_python, venv_python, *sys.argv)
 
-# 2. Set TESSDATA_PREFIX for Flatpak and installed environments
+# 2. Handle GSettings Schemas (local dev)
+# If running from builddir, use the compiled schemas there
+build_schema_dir = os.path.join(script_dir, 'data')
+if os.path.exists(os.path.join(build_schema_dir, 'gschemas.compiled')):
+    os.environ['GSETTINGS_SCHEMA_DIR'] = build_schema_dir
+
+# 3. Set TESSDATA_PREFIX for Flatpak and installed environments
 tessdata = os.path.join(
     os.environ.get('FLATPAK_DEST', '/usr'),
     'share', 'tessdata'
@@ -19,7 +25,7 @@ tessdata = os.path.join(
 if os.path.isdir(tessdata):
     os.environ.setdefault('TESSDATA_PREFIX', tessdata)
 
-# 3. Add package to path
+# 4. Add package to path
 rel_datadir = os.path.abspath(os.path.join(script_dir, '..', 'share', 'spider'))
 if os.path.exists(rel_datadir):
     sys.path.insert(0, rel_datadir)

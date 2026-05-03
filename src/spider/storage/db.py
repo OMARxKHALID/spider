@@ -20,20 +20,30 @@ class DatabaseManager:
         
         self.db_path = db_path
         self._local = threading.local()
+        self._all_connections = []
+        self._conn_lock = threading.Lock()
         self._init_db()
 
     @property
     def connection(self):
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.row_factory = sqlite3.Row
-            self._local.conn = conn
+            with self._conn_lock:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.row_factory = sqlite3.Row
+                self._all_connections.append(conn)
+                self._local.conn = conn
         return self._local.conn
 
     def close(self):
-        if hasattr(self._local, "conn") and self._local.conn:
-            self._local.conn.close()
+        with self._conn_lock:
+            for conn in self._all_connections:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._all_connections.clear()
+        if hasattr(self._local, "conn"):
             self._local.conn = None
 
     def _init_db(self):
@@ -108,24 +118,27 @@ class DatabaseManager:
     def save_result(self, result: OCRResult):
         logger.info("DB: Saving OCR result (%d characters)", len(result.text))
         conn = self.connection
-        cursor = conn.cursor()
         try:
-            cursor.execute(
-                """INSERT INTO history (timestamp, text, image_blob, engine_used, language, confidence) 
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (result.timestamp, result.text, result.image_bytes, result.engine_used, result.language, result.confidence)
-            )
-            
-            cursor.execute("""
-                DELETE FROM history WHERE id NOT IN (
-                    SELECT id FROM history ORDER BY timestamp DESC LIMIT 500
+            with conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """INSERT INTO history (timestamp, text, image_blob, engine_used, language, confidence) 
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (result.timestamp, result.text, result.image_bytes, result.engine_used, result.language, result.confidence)
                 )
-            """)
-            
-            conn.commit()
-            return cursor.lastrowid
-        finally:
-            cursor.close()
+                last_id = cursor.lastrowid
+                
+                # Only run cleanup every 10 saves to reduce I/O pressure
+                if last_id % 10 == 0:
+                    cursor.execute("""
+                        DELETE FROM history WHERE id NOT IN (
+                            SELECT id FROM history ORDER BY timestamp DESC LIMIT 500
+                        )
+                    """)
+                return last_id
+        except Exception as e:
+            logger.error("DB: Failed to save result: %s", e)
+            raise
 
     def get_history(self, limit: int = 50, offset: int = 0) -> List[dict]:
         safe_limit = min(limit, 200)

@@ -45,7 +45,9 @@ MANIFEST
 htmlcov/
 
 # Local Data & Logs
-*.db
+history.db
+history.db-wal
+history.db-shm
 *.log
 .env
 .env.*

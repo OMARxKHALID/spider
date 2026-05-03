@@ -3,12 +3,23 @@
   <schema id="org.domain.Spider" path="/org/domain/Spider/">
     <key name="ocr-engine" type="s">
       <default>'tesseract'</default>
-      <summary>The OCR engine to use</summary>
-      <description>Supported values are 'tesseract' and 'paddleocr'.</description>
+      <summary>OCR Engine</summary>
+      <description>The OCR engine to use. Must match a registered engine ID.</description>
     </key>
     <key name="language" type="s">
       <default>'eng'</default>
-      <summary>Target language for OCR</summary>
+      <summary>OCR Language</summary>
+      <description>Language code passed to the engine.</description>
+    </key>
+    <key name="tesseract-psm" type="i">
+      <default>3</default>
+      <range min="0" max="13"/>
+      <summary>Tesseract Page Segmentation Mode</summary>
+    </key>
+    <key name="confidence-threshold" type="d">
+      <default>0.0</default>
+      <range min="0.0" max="1.0"/>
+      <summary>Minimum confidence threshold</summary>
     </key>
   </schema>
 </schemalist>

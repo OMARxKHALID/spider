@@ -19,6 +19,7 @@ class HistoryView(Gtk.Box):
         
         self.search_bar = Gtk.SearchEntry(placeholder_text="Search history...")
         self.search_bar.connect("search-changed", self._on_search_changed)
+        self.search_bar.update_property([Gtk.AccessibleProperty.LABEL], ["Search history"])
         
         self._search_timeout_id = 0
         self.stack = Gtk.Stack()
@@ -59,8 +60,11 @@ class HistoryView(Gtk.Box):
 
     def refresh(self, query=None):
         logger.info("UI: Refreshing history list (query: %s)", query)
-        while (child := self.list_box.get_first_child()):
-            self.list_box.remove(child)
+        if hasattr(self.list_box, "remove_all"):
+            self.list_box.remove_all()
+        else:
+            while (child := self.list_box.get_first_child()):
+                self.list_box.remove(child)
             
         if query:
             items = self.db.search_history(query)
@@ -78,11 +82,12 @@ class HistoryView(Gtk.Box):
             row.set_activatable(True)
             row._item = item
             
-            escaped_text = GLib.markup_escape_text(item['text'][:100])
-            row.set_title(escaped_text + ("..." if len(item['text']) > 100 else ""))
+            escaped_text = GLib.markup_escape_text(item['text'])
+            row.set_title(escaped_text)
+            row.set_title_lines(1)
             
             dt = datetime.datetime.fromtimestamp(item['timestamp'])
-            row.set_subtitle(self._relative_time(dt))
+            row.set_subtitle(f"{self._relative_time(dt)} • {item['engine_used'].title()}")
             
             copy_btn = Gtk.Button(icon_name="edit-copy-symbolic")
             copy_btn.add_css_class("flat")
@@ -95,7 +100,7 @@ class HistoryView(Gtk.Box):
 
             del_btn = Gtk.Button(icon_name="user-trash-symbolic")
             del_btn.add_css_class("flat")
-            del_btn.add_css_class("error")
+            del_btn.add_css_class("destructive-action")
             del_btn.add_css_class("delete-button")
             del_btn.set_tooltip_text("Delete Item")
             del_btn.update_property(

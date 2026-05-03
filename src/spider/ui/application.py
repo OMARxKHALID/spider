@@ -16,11 +16,36 @@ class SpiderApplication(Adw.Application):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.win = None
+        self._setup_actions()
+        self.set_accels_for_action("app.preferences", ["<Control>comma"])
+        self.set_accels_for_action("app.about", ["F1"])
+        self.set_accels_for_action("win.shortcuts", ["<Control>question"])
+
+    def _setup_actions(self):
+        action = Gio.SimpleAction.new("preferences", None)
+        action.connect("activate", self._on_preferences_clicked)
+        self.add_action(action)
+
+        action = Gio.SimpleAction.new("about", None)
+        action.connect("activate", self._on_about_clicked)
+        self.add_action(action)
+
+        action = Gio.SimpleAction.new("quit", None)
+        action.connect("activate", lambda *_: self.quit())
+        self.add_action(action)
+        self.set_accels_for_action("app.quit", ["<Control>q"])
+
+    def _on_preferences_clicked(self, *args):
+        if self.win:
+            self.win._on_preferences_clicked(None)
+
+    def _on_about_clicked(self, *args):
+        if self.win:
+            self.win._on_about_clicked(None)
 
     def do_activate(self):
         logger.info("App: Application activated")
 
-        # Check dependencies BEFORE creating the window
         try:
             import pytesseract
             import PIL
@@ -48,7 +73,6 @@ class SpiderApplication(Adw.Application):
         self.win.present()
 
     def _show_preflight_error(self, title, message):
-        """Show error dialog before window exists. Creates a temporary window as parent."""
         temp_win = Adw.ApplicationWindow(application=self)
         temp_win.set_default_size(400, 200)
         temp_win.present()

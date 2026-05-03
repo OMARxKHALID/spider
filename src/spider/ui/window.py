@@ -17,6 +17,9 @@ class SpiderWindow(Adw.ApplicationWindow):
 
         self.set_title("Spider")
         self.set_default_size(800, 600)
+        self.set_size_request(400, 300)
+        self._file_dialog = None
+        self._capture_timeout_id = 0
 
         self._history_view = None
         self._history_page = None
@@ -88,6 +91,16 @@ class SpiderWindow(Adw.ApplicationWindow):
         copy_shortcut = Gtk.Shortcut.new(copy_trigger, copy_action)
         controller.add_shortcut(copy_shortcut)
 
+        new_cap_trigger = Gtk.ShortcutTrigger.parse_string("<Control>N")
+        new_cap_action = Gtk.CallbackAction.new(lambda *_: [self.on_capture_clicked(None), True][-1])
+        new_cap_shortcut = Gtk.Shortcut.new(new_cap_trigger, new_cap_action)
+        controller.add_shortcut(new_cap_shortcut)
+
+        open_trigger = Gtk.ShortcutTrigger.parse_string("<Control>O")
+        open_action = Gtk.CallbackAction.new(lambda *_: [self.on_open_clicked(None), True][-1])
+        open_shortcut = Gtk.Shortcut.new(open_trigger, open_action)
+        controller.add_shortcut(open_shortcut)
+
         self.add_controller(controller)
 
     def _create_home_page(self):
@@ -108,12 +121,21 @@ class SpiderWindow(Adw.ApplicationWindow):
         btn_box.append(self.capture_btn)
 
         self.open_btn = Gtk.Button(label="Open Image")
+        self.open_btn.add_css_class("suggested-action")
         self.open_btn.add_css_class("pill")
         self.open_btn.set_size_request(160, 44)
         self.open_btn.connect("clicked", self.on_open_clicked)
         btn_box.append(self.open_btn)
 
-        status_page.set_child(btn_box)
+        self.spinner = Gtk.Spinner()
+        self.spinner.set_halign(Gtk.Align.CENTER)
+        self.spinner.set_margin_top(24)
+        
+        status_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        status_box.append(btn_box)
+        status_box.append(self.spinner)
+        
+        status_page.set_child(status_box)
 
         toolbar_view = Adw.ToolbarView()
         header_bar = Adw.HeaderBar()
@@ -128,13 +150,20 @@ class SpiderWindow(Adw.ApplicationWindow):
         history_btn.connect("clicked", lambda x: self.nav_view.push(self.history_page))
         header_bar.pack_start(history_btn)
 
-        about_btn = Gtk.Button(icon_name="help-about-symbolic")
-        about_btn.set_tooltip_text("About")
-        about_btn.update_property(
-            [Gtk.AccessibleProperty.LABEL], ["About Spider"]
-        )
-        about_btn.connect("clicked", self._on_about_clicked)
-        header_bar.pack_end(about_btn)
+        menu = Gio.Menu.new()
+        menu.append("Preferences", "app.preferences")
+        menu.append("Keyboard Shortcuts", "win.shortcuts")
+        menu.append("About Spider", "app.about")
+
+        self.menu_btn = Gtk.MenuButton(icon_name="open-menu-symbolic")
+        self.menu_btn.set_menu_model(menu)
+        self.menu_btn.set_tooltip_text("Main Menu")
+        self.menu_btn.update_property([Gtk.AccessibleProperty.LABEL], ["Main Menu"])
+        header_bar.pack_end(self.menu_btn)
+
+        action = Gio.SimpleAction.new("shortcuts", None)
+        action.connect("activate", self._on_shortcuts_clicked)
+        self.add_action(action)
 
         toolbar_view.add_top_bar(header_bar)
         toolbar_view.set_content(status_page)
@@ -153,10 +182,10 @@ class SpiderWindow(Adw.ApplicationWindow):
         self.text_view.set_margin_end(12)
         self.text_view.set_margin_top(12)
         self.text_view.set_margin_bottom(12)
-        self.text_view.set_left_margin(20)
-        self.text_view.set_right_margin(20)
-        self.text_view.set_top_margin(20)
-        self.text_view.set_bottom_margin(20)
+        self.text_view.set_left_margin(24)
+        self.text_view.set_right_margin(24)
+        self.text_view.set_top_margin(24)
+        self.text_view.set_bottom_margin(24)
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_child(self.text_view)
@@ -227,17 +256,17 @@ class SpiderWindow(Adw.ApplicationWindow):
         clear_btn.update_property(
             [Gtk.AccessibleProperty.LABEL], ["Clear All History"]
         )
-        clear_btn.add_css_class("error")
+        clear_btn.add_css_class("destructive-action")
         clear_btn.connect("clicked", self._on_clear_history_clicked)
         header_bar.pack_end(clear_btn)
 
-        search_bar = Gtk.SearchBar()
-        search_bar.connect_entry(self.history_view.search_bar)
-        search_bar.set_child(self.history_view.search_bar)
-        search_btn.bind_property("active", search_bar, "search-mode-enabled", GObject.BindingFlags.BIDIRECTIONAL)
+        self.search_bar_widget = Gtk.SearchBar()
+        self.search_bar_widget.connect_entry(self.history_view.search_bar)
+        self.search_bar_widget.set_child(self.history_view.search_bar)
+        search_btn.connect("toggled", lambda b: self.search_bar_widget.set_search_mode(b.get_active()) if self.search_bar_widget else None)
 
         toolbar_view.add_top_bar(header_bar)
-        toolbar_view.add_top_bar(search_bar)
+        toolbar_view.add_top_bar(self.search_bar_widget)
 
         self.history_view.set_margin_start(24)
         self.history_view.set_margin_end(24)
@@ -261,10 +290,18 @@ class SpiderWindow(Adw.ApplicationWindow):
         self.capture_btn.set_sensitive(False)
         self.open_btn.set_sensitive(False)
         self._home_status_page.set_title("Capturing...")
-        self.home_title.set_subtitle("Selecting region...")
+        self.spinner.start()
 
         self.set_visible(False)
-        GLib.timeout_add(300, self.coordinator.start_capture_flow)
+        if self._capture_timeout_id:
+            GLib.source_remove(self._capture_timeout_id)
+        
+        def _timeout_cb():
+            self._capture_timeout_id = 0
+            self.coordinator.start_capture_flow()
+            return False
+
+        self._capture_timeout_id = GLib.timeout_add(300, _timeout_cb)
 
     def on_open_clicked(self, button):
         logger.info("UI: Open image requested")
@@ -299,15 +336,10 @@ class SpiderWindow(Adw.ApplicationWindow):
         if file:
             path = file.get_path()
             logger.info("UI: Opening local image: %s", path)
-            try:
-                with open(path, "rb") as f:
-                    image_bytes = f.read()
-                self.add_toast("Processing Image...")
-                self._home_status_page.set_title("Processing...")
-                self.coordinator.process_image(image_bytes)
-            except Exception as e:
-                logger.error("UI: Failed to read image: %s", e)
-                self.add_toast(f"Failed to read image: {str(e)}")
+            self.add_toast("Processing Image...")
+            self._home_status_page.set_title("Processing...")
+            self.spinner.start()
+            self.coordinator.process_image(path)
 
     def _on_history_item_selected(self, item):
         logger.info("UI: Historical item selected: %d", item['id'])
@@ -323,19 +355,20 @@ class SpiderWindow(Adw.ApplicationWindow):
 
     def show_result(self, result):
         logger.info("UI: Displaying OCR result (%d characters)", len(result.text))
+        _ = self.result_page 
         self._home_status_page.set_title("Ready to Capture")
+        self.spinner.stop()
         self.home_title.set_subtitle("")
         self.capture_btn.set_sensitive(True)
         self.open_btn.set_sensitive(True)
 
         self.set_visible(True)
         self.present()
+        self.text_view.grab_focus()
 
         if not result.text or not result.text.strip():
             self.add_toast("No text detected")
             return
-
-        _ = self.result_page 
 
         buffer = self.text_view.get_buffer()
         buffer.set_text(result.text, -1)
@@ -344,7 +377,7 @@ class SpiderWindow(Adw.ApplicationWindow):
         char_count = len(result.text)
         accuracy = result.confidence * 100
         self.stats_label.set_label(f"{word_count} words · {char_count} characters · {accuracy:.1f}% accuracy")
-        self.result_title.set_subtitle(f"{word_count} words extracted ({accuracy:.0f}% confidence)")
+        self.result_title.set_subtitle(f"{result.engine_used.title()} Engine · {accuracy:.0f}% confidence")
 
         if self.nav_view.get_visible_page() != self.result_page:
             self.nav_view.push(self.result_page)
@@ -352,10 +385,19 @@ class SpiderWindow(Adw.ApplicationWindow):
         if self._history_view:
             self.history_view.refresh()
 
+    def set_processing_state(self):
+        self.set_visible(True)
+        self.present()
+        self._home_status_page.set_title("Processing...")
+        self.spinner.start()
+        self.capture_btn.set_sensitive(False)
+        self.open_btn.set_sensitive(False)
+
     def reset_home_title(self):
         self.set_visible(True)
         self.present()
         self._home_status_page.set_title("Ready to Capture")
+        self.spinner.stop()
         self.home_title.set_subtitle("")
         self.capture_btn.set_sensitive(True)
         self.open_btn.set_sensitive(True)
@@ -385,6 +427,33 @@ class SpiderWindow(Adw.ApplicationWindow):
         about.set_website("https://github.com/omarxkhalid/spider")
         about.set_copyright("© 2026 omarxkhalid")
         about.present(self)
+
+    def _on_preferences_clicked(self, btn):
+        from spider.ui.preferences import SpiderPreferencesWindow
+        prefs = SpiderPreferencesWindow(transient_for=self)
+        prefs.present()
+
+    def _on_shortcuts_clicked(self, *args):
+        shortcuts = Gtk.ShortcutsWindow(transient_for=self)
+        
+        section = Gtk.ShortcutsSection()
+        group = Gtk.ShortcutsGroup(title="General")
+        
+        def add_shortcut(title, accel):
+            shortcut = Gtk.ShortcutsShortcut(title=title, accelerator=accel)
+            group.append(shortcut)
+
+        add_shortcut("New Capture", "<Control><Shift>C")
+        add_shortcut("Open Image", "<Control>O")
+        add_shortcut("Toggle History", "<Control>H")
+        add_shortcut("Copy Result", "<Control>C")
+        add_shortcut("Preferences", "<Control>comma")
+        add_shortcut("Keyboard Shortcuts", "<Control>question")
+        add_shortcut("Quit", "<Control>Q")
+        
+        section.append(group)
+        shortcuts.set_child(section)
+        shortcuts.present()
 
     def add_toast(self, text):
         toast = Adw.Toast.new(text)
