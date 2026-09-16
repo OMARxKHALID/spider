@@ -8,9 +8,9 @@ A fast, lightweight, and modern desktop OCR tool for Linux built with Python, GT
 
 - **Region Capture:** Instantly grab a portion of your screen (X11 & Wayland supported via XDG Desktop Portals).
 - **Offline OCR:** Powered entirely by Tesseract OCR — all processing happens locally. No internet connection required.
-- **Image Preprocessing:** Smart OpenCV pipelines automatically upscale small text, deskew, enhance contrast, and detect dark mode to achieve >95% accuracy.
-- **Searchable History:** All captured text is saved locally into a blazing-fast SQLite FTS5 database, capped at 500 records to preserve storage.
-- **Accessibility & HIG Compliant:** Full GTK4/Libadwaita integration ensuring dark mode support, Wayland safety, and screen reader compatibility.
+- **Image Preprocessing:** Handles dark mode, colored buttons, small text, skewed scans and JPEG photos, and keeps line breaks, paragraphs and code indentation.
+- **Searchable History:** Recognized text (not the screenshot) is saved locally into a blazing-fast SQLite FTS5 database, capped at 500 records to preserve storage.
+- **GTK4/Libadwaita UI:** Dark mode support, Wayland-native, labelled controls for screen readers.
 
 ---
 
@@ -22,14 +22,14 @@ Ensure you have the following system dependencies installed:
 
 - `tesseract-ocr` and English language data (`tesseract-ocr-eng`)
 - `python3` (>=3.10)
-- `libgtk-4-dev`, `libadwaita-1-dev`
-- OpenCV Python and PyGObject (`python3-gi`, `python3-opencv`)
+- GTK 4 and libadwaita ≥ 1.5 introspection data (`gir1.2-gtk-4.0`, `gir1.2-adw-1`)
+- OpenCV and PyGObject (`python3-opencv`, `python3-gi`)
 
 ### Installing from Source (Meson)
 
 ```bash
-git clone https://github.com/omar/spider-ocr.git
-cd spider-ocr
+git clone https://github.com/OMARxKHALID/spider.git
+cd spider
 meson setup build
 meson compile -C build
 sudo meson install -C build
@@ -52,19 +52,19 @@ _Note: For production Flatpak builds, it is highly recommended to run `flatpak-p
 
 ### Smart Preprocessing
 
-Spider doesn't just pass images to Tesseract. It runs an intelligent pipeline:
+Spider prepares each image before handing it to Tesseract:
 
-1. Adaptive DPI upscaling.
-2. Deskewing to fix angled captures.
-3. Sharpening and Denoising.
-4. Intelligent Binarization: Adaptive Gaussian thresholding for gradients, or Otsu's method depending on the image's standard deviation.
+1. Detects light text on dark or colored backgrounds and flips it to dark-on-light, then stretches contrast.
+2. Straightens skewed scans and photos using a projection-profile search (screen captures are left untouched).
+3. Measures the actual text height and upscales only as much as needed, within a memory budget.
+4. Rebuilds the text layout from word positions, keeping line breaks, paragraph gaps and code indentation.
 
 ### Storage & Security
 
-Data is stored locally under `~/.local/share/spider/history.db` with strict `0700` permissions. The UI performs non-blocking asynchronous reads/writes and maintains a generation-counter to safely ignore stale Wayland UI callbacks.
+Data is stored locally under `~/.local/share/spider/history.db` with strict `0700` permissions. OCR runs on a worker thread and a generation counter discards results from timed-out or superseded runs.
 
 ---
 
 ## License
 
-Spider is released under the MIT License.
+Spider is free software, released under the [GNU General Public License v3.0 or later](LICENSE).

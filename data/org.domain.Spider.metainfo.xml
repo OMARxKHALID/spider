@@ -3,13 +3,15 @@
   <id>org.domain.Spider</id>
   <name>Spider</name>
   <summary>Instant text extraction (OCR) tool</summary>
-  <developer_name>Omar Khalid</developer_name>
+  <developer id="io.github.omarxkhalid">
+    <name>Omar Khalid</name>
+  </developer>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <description>
     <p>
-      Spider is an intuitive text extraction tool for the GNOME desktop. 
-      It allows you to capture a region of your screen and instantly extract text 
+      Spider is an intuitive text extraction tool for the GNOME desktop.
+      It allows you to capture a region of your screen and instantly extract text
       using an optimized OCR pipeline.
     </p>
     <ul>
@@ -28,16 +30,20 @@
   <url type="homepage">https://github.com/OMARxKHALID/spider</url>
   <url type="bugtracker">https://github.com/OMARxKHALID/spider/issues</url>
   <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
     <control>pointing</control>
     <control>keyboard</control>
-  </requires>
-  <recommends>
     <control>touch</control>
-    <display_length side="shortest" benchmark="small">360</display_length>
-    <display_length side="shortest" benchmark="medium">768</display_length>
-  </recommends>
+  </supports>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="1.1.0" date="2026-09-16">
+      <description>
+        <p>More accurate text extraction, a redesigned history, and clearer error messages.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-05-01" />
   </releases>
 </component>

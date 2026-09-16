@@ -1,139 +1,109 @@
-import pytest
-import numpy as np
-import cv2
-import os
+import difflib
+import io
+import shutil
+import subprocess
 
-pytestmark = pytest.mark.skipif(
-    os.system("which tesseract > /dev/null 2>&1") != 0,
-    reason="Tesseract not installed"
+import cv2
+import numpy as np
+import pytest
+
+pytestmark = pytest.mark.skipif(shutil.which("tesseract") is None, reason="Tesseract not installed")
+
+PARAGRAPHS = (
+    "Optical character recognition converts images of typed or printed text\n"
+    "into machine-encoded text, from a scanned document or a photo.\n"
+    "\n"
+    "Widely used as a form of data entry from printed paper data records,\n"
+    "it is a common method of digitizing printed texts."
+)
+CODE = (
+    "def search_history(self, query):\n"
+    "    terms = query.split()\n"
+    "    if not terms:\n"
+    "        return self.get_history()"
 )
 
-def render_text_image(text, font_size=1.0, bg=255, fg=0,
-                      width=800, height=100, thickness=2):
-    img = np.ones((height, width, 3), dtype=np.uint8) * bg
-    cv2.putText(img, text, (20, int(height * 0.7)),
-                cv2.FONT_HERSHEY_SIMPLEX, font_size,
-                (fg, fg, fg), thickness)
-    return img
 
-def ocr_image(img):
+def font_file(pattern):
+    try:
+        path = subprocess.run(["fc-match", "-f", "%{file}", pattern], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return path if path.endswith((".ttf", ".otf")) else None
+
+
+def render(text, font_pattern, size, fg, bg):
+    from PIL import Image, ImageDraw, ImageFont
+    path = font_file(font_pattern)
+    if not path:
+        pytest.skip(f"No font for {font_pattern}")
+    font = ImageFont.truetype(path, size)
+    spacing = round(size * 0.45)
+    left, top, right, bottom = ImageDraw.Draw(Image.new("RGB", (1, 1))).multiline_textbbox((0, 0), text, font=font, spacing=spacing)
+    margin = max(12, size)
+    img = Image.new("RGB", (right - left + 2 * margin, bottom - top + 2 * margin), bg)
+    ImageDraw.Draw(img).multiline_text((margin - left, margin - top), text, font=font, fill=fg, spacing=spacing)
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def ocr(png):
     from spider.vision.preprocessor import Preprocessor
     from spider.ocr.tesseract import TesseractEngine
-    _, buf = cv2.imencode('.png', img)
-    preprocessed = Preprocessor.process_image(buf.tobytes())
     engine = TesseractEngine()
-    engine.load_model("eng")
-    result = engine.recognize(preprocessed)
-    return result.text.strip(), result.confidence
+    assert engine.load_model("eng")
+    return engine.recognize(Preprocessor.process_image(png)).text
 
-def character_accuracy(expected: str, actual: str) -> float:
-    """Character-level accuracy using edit distance."""
-    if not expected:
-        return 1.0
-    import difflib
-    matcher = difflib.SequenceMatcher(None, expected.lower(), actual.lower())
-    return matcher.ratio()
 
-class TestOCRAccuracy:
+def accuracy(expected, actual):
+    return difflib.SequenceMatcher(None, " ".join(expected.split()), " ".join(actual.split())).ratio()
 
-    # ── Target: 95%+ character accuracy on clean input ──────
 
-    def test_clean_text_accuracy(self):
-        target = "Hello World 1234"
-        img = render_text_image(target, font_size=1.5)
-        result, conf = ocr_image(img)
-        acc = character_accuracy(target, result)
-        assert acc >= 0.90, \
-            f"Clean text accuracy {acc:.1%} below 90% threshold\n" \
-            f"Expected: '{target}'\nGot:      '{result}'"
+@pytest.mark.parametrize("name, text, font, size, fg, bg", [
+    ("ui-light", "Settings Wi-Fi Bluetooth Displays Sound", "sans-serif", 13, (30, 30, 30), (250, 250, 250)),
+    ("ui-dark", "Settings Wi-Fi Bluetooth Displays Sound", "sans-serif", 13, (255, 255, 255), (36, 36, 36)),
+    ("white-on-blue-button", "Download Update", "sans-serif:bold", 14, (255, 255, 255), (53, 132, 228)),
+    ("red-error", "Error: the file could not be saved", "sans-serif", 13, (224, 27, 36), (255, 255, 255)),
+    ("dim-caption-dark", "Last updated 5 minutes ago", "sans-serif", 11, (160, 160, 160), (30, 30, 30)),
+    ("invoice-symbols", "Invoice #4821 Due: 2026-09-30\nTotal: $1,249.00 (VAT 20%)\nbilling@example.com", "sans-serif", 14, (0, 0, 0), (255, 255, 255)),
+])
+def test_screen_text_accuracy(name, text, font, size, fg, bg):
+    result = ocr(render(text, font, size, fg, bg))
+    assert accuracy(text, result) >= 0.97, f"{name}: {result!r}"
 
-    def test_dark_mode_accuracy(self):
-        target = "Dark Mode Text"
-        img = render_text_image(target, bg=30, fg=240, font_size=1.5)
-        result, conf = ocr_image(img)
-        acc = character_accuracy(target, result)
-        assert acc >= 0.85, \
-            f"Dark mode accuracy {acc:.1%} below 85%\n" \
-            f"Expected: '{target}'\nGot:      '{result}'"
 
-    def test_small_text_accuracy(self):
-        """Small text that requires upscaling."""
-        target = "Small Text"
-        img = render_text_image(target, font_size=0.5,
-                                width=200, height=40, thickness=1)
-        result, conf = ocr_image(img)
-        acc = character_accuracy(target, result)
-        assert acc >= 0.80, \
-            f"Small text accuracy {acc:.1%} below 80%\n" \
-            f"Expected: '{target}'\nGot:      '{result}'"
+def test_paragraph_breaks_preserved():
+    result = ocr(render(PARAGRAPHS, "sans-serif", 14, (40, 40, 40), (255, 255, 255)))
+    assert accuracy(PARAGRAPHS, result) >= 0.97, result
+    assert result.count("\n\n") == 1, repr(result)
+    assert len([l for l in result.split("\n") if l.strip()]) == 4, repr(result)
 
-    def test_low_contrast_accuracy(self):
-        """Light gray text — requires CLAHE."""
-        target = "Low Contrast"
-        img = render_text_image(target, fg=180, font_size=1.5)
-        result, conf = ocr_image(img)
-        acc = character_accuracy(target, result)
-        assert acc >= 0.80, \
-            f"Low contrast accuracy {acc:.1%} below 80%\n" \
-            f"Expected: '{target}'\nGot:      '{result}'"
 
-    def test_numbers_and_symbols(self):
-        """Numbers and mixed symbols common in UI text."""
-        target = "Version 2.0.1 Build 42"
-        img = render_text_image(target, font_size=1.2)
-        result, conf = ocr_image(img)
-        acc = character_accuracy(target, result)
-        assert acc >= 0.85, \
-            f"Numbers/symbols accuracy {acc:.1%} below 85%\n" \
-            f"Expected: '{target}'\nGot:      '{result}'"
+def test_code_indentation_preserved():
+    result = ocr(render(CODE, "monospace", 13, (212, 212, 212), (30, 30, 30)))
+    indents = [len(line) - len(line.lstrip()) for line in result.split("\n") if line.strip()]
+    assert indents == [0, 4, 4, 8], repr(result)
 
-    def test_multiline_structure_preserved(self):
-        """Multi-line text must preserve line breaks in output."""
-        img = np.ones((250, 600, 3), dtype=np.uint8) * 255
-        cv2.putText(img, "First line of text", (20, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 2)
-        cv2.putText(img, "Second line of text", (20, 180),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 2)
-        result, _ = ocr_image(img)
-        assert '\n' in result, \
-            f"Multi-line text must contain newline\nGot: {repr(result)}"
 
-    def test_confidence_score_reasonable(self):
-        """Confidence on clean text must be > 70%."""
-        img = render_text_image("Clear Text Here", font_size=1.5)
-        _, conf = ocr_image(img)
-        assert conf > 0.70, \
-            f"Confidence {conf:.1%} too low for clean text"
+def test_jpeg_photo_of_text():
+    png = render(PARAGRAPHS, "sans-serif", 15, (30, 30, 30), (240, 240, 240))
+    img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+    jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 35])[1].tobytes()
+    assert accuracy(PARAGRAPHS, ocr(jpeg)) >= 0.97
 
-    # ── Accuracy benchmark — print full report ───────────────
 
-    def test_print_accuracy_report(self):
-        """Runs all scenarios and prints a summary table."""
-        scenarios = [
-            ("Clean large text",     render_text_image("Hello World", font_size=2.0)),
-            ("Clean medium text",    render_text_image("Hello World", font_size=1.0)),
-            ("Dark mode",            render_text_image("Hello World", bg=30, fg=240)),
-            ("Low contrast",         render_text_image("Hello World", fg=180)),
-            ("Small text",           render_text_image("Hello World", font_size=0.5,
-                                                        width=200, height=40,
-                                                        thickness=1)),
-            ("Numbers",              render_text_image("1234567890")),
-        ]
-        expected = "Hello World"
-        print("\n\n═══════ OCR ACCURACY REPORT ═══════")
-        print(f"{'Scenario':<25} {'Accuracy':>10} {'Confidence':>12} {'Output'}")
-        print("─" * 70)
-        all_pass = True
-        for name, img in scenarios:
-            result, conf = ocr_image(img)
-            acc = character_accuracy(
-                expected if "Number" not in name else "1234567890",
-                result
-            )
-            status = "✓" if acc >= 0.80 else "✗"
-            if acc < 0.80:
-                all_pass = False
-            print(f"{name:<25} {acc:>9.1%}  {conf:>10.1%}  {repr(result[:30])}")
-        print("─" * 70)
-        print(f"Overall: {'ALL PASS ✓' if all_pass else 'FAILURES DETECTED ✗'}")
-        print("═" * 36)
+def test_noisy_skewed_scan():
+    png = render(PARAGRAPHS, "serif", 18, (20, 20, 20), (240, 238, 230))
+    img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+    img = cv2.copyMakeBorder(img, 60, 60, 60, 60, cv2.BORDER_CONSTANT, value=(240, 238, 230))
+    h, w = img.shape[:2]
+    img = cv2.warpAffine(img, cv2.getRotationMatrix2D((w / 2, h / 2), 3, 1.0), (w, h), borderValue=(240, 238, 230))
+    rng = np.random.default_rng(7)
+    img = np.clip(img.astype(np.int16) + rng.normal(0, 18, img.shape), 0, 255).astype(np.uint8)
+    assert accuracy(PARAGRAPHS, ocr(cv2.imencode(".png", img)[1].tobytes())) >= 0.95
+
+
+def test_blank_image_gives_no_text():
+    blank = cv2.imencode(".png", np.full((200, 400, 3), 255, np.uint8))[1].tobytes()
+    assert ocr(blank).strip() == ""

@@ -1,90 +1,111 @@
+import logging
+import shutil
+import sqlite3
+import threading
+
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, Gio
+from gi.repository import Adw, Gio, GLib, Gtk
 
-import logging
-import shutil
+from spider import __version__
+from spider.core.exceptions import describe_error
 
 logger = logging.getLogger(__name__)
 
-def get_spider_window():
-    from spider.ui.window import SpiderWindow
-    return SpiderWindow
+ACCELERATORS = {
+    "app.quit": ["<Control>q"],
+    "app.preferences": ["<Control>comma"],
+    "win.capture": ["<Control><Shift>c"],
+    "win.open": ["<Control>o"],
+    "win.history": ["<Control>h"],
+}
+
 
 class SpiderApplication(Adw.Application):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.win = None
-        self._setup_actions()
-        self.set_accels_for_action("app.preferences", ["<Control>comma"])
-        self.set_accels_for_action("app.about", ["F1"])
-        self.set_accels_for_action("win.shortcuts", ["<Control>question"])
 
-    def _setup_actions(self):
-        action = Gio.SimpleAction.new("preferences", None)
-        action.connect("activate", self._on_preferences_clicked)
-        self.add_action(action)
+        for name, callback in (
+            ("preferences", self._on_preferences),
+            ("about", self._on_about),
+            ("quit", lambda *_: self.quit()),
+        ):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", callback)
+            self.add_action(action)
 
-        action = Gio.SimpleAction.new("about", None)
-        action.connect("activate", self._on_about_clicked)
-        self.add_action(action)
-
-        action = Gio.SimpleAction.new("quit", None)
-        action.connect("activate", lambda *_: self.quit())
-        self.add_action(action)
-        self.set_accels_for_action("app.quit", ["<Control>q"])
-
-    def _on_preferences_clicked(self, *args):
-        if self.win:
-            self.win._on_preferences_clicked(None)
-
-    def _on_about_clicked(self, *args):
-        if self.win:
-            self.win._on_about_clicked(None)
+        for action_name, accels in ACCELERATORS.items():
+            self.set_accels_for_action(action_name, accels)
 
     def do_activate(self):
-        logger.info("App: Application activated")
-
-        try:
-            import pytesseract
-            import PIL
-            import cv2
-        except ImportError as e:
-            logger.error("App: Missing dependency: %s", e.name)
-            self._show_preflight_error(
-                "Missing Dependencies",
-                f"Required Python module '{e.name}' is not installed.\n\nPlease install it to continue."
-            )
-            return
-
-        if not shutil.which('tesseract'):
-            logger.error("App: Tesseract binary not found in PATH")
-            self._show_preflight_error(
-                "Missing Dependency",
-                "Tesseract OCR is not installed.\n\nPlease install it (e.g., sudo apt install tesseract-ocr)."
-            )
-            return
-
         if not self.win:
             logger.info("App: Creating main window")
-            SpiderWindow = get_spider_window()
-            self.win = SpiderWindow(application=self)
+            try:
+                from spider.ui.window import SpiderWindow
+                self.win = SpiderWindow(application=self)
+            except Exception as e:
+                logger.exception("App: Could not create main window")
+                for window in self.get_windows():
+                    window.destroy()
+                message = describe_error(e)
+                if isinstance(e, sqlite3.Error):
+                    from spider.storage.db import default_db_path
+                    message += f"\n\nThe history file may be damaged: {default_db_path()}"
+                self._show_fatal_error(message)
+                return
+            self.win.show_processing()
+            threading.Thread(target=self._check_dependencies, daemon=True).start()
         self.win.present()
 
-    def _show_preflight_error(self, title, message):
-        temp_win = Adw.ApplicationWindow(application=self)
-        temp_win.set_default_size(400, 200)
-        temp_win.present()
+    def _check_dependencies(self):
+        logger.info("App: Starting background dependency check")
+        try:
+            import cv2
+            import numpy
+            if not shutil.which("tesseract"):
+                raise RuntimeError("Tesseract OCR is not installed. Install the tesseract-ocr package.")
+            GLib.idle_add(self.win.show_idle)
+        except ImportError as e:
+            logger.exception("App: Missing Python dependency")
+            GLib.idle_add(self._show_fatal_error, f"A required Python module is missing: {e.name}")
+        except Exception as e:
+            logger.exception("App: Initialization failed")
+            GLib.idle_add(self._show_fatal_error, str(e))
 
-        dialog = Adw.AlertDialog.new(title, message)
-        dialog.add_response("close", "Close")
-        dialog.set_default_response("close")
+    def _show_fatal_error(self, message):
+        parent = self.win
+        if parent is None:
+            parent = Adw.ApplicationWindow(application=self, title="Spider", default_width=420, default_height=240)
+            parent.present()
+        dialog = Adw.AlertDialog(heading="Spider Cannot Start", body=message)
+        dialog.add_response("close", "_Close")
         dialog.connect("response", lambda *_: self.quit())
-        dialog.present(temp_win)
+        dialog.present(parent)
+        return GLib.SOURCE_REMOVE
+
+    def _on_preferences(self, *_):
+        from spider.ui.preferences import SpiderPreferencesDialog
+        SpiderPreferencesDialog().present(self.win)
+
+    def _on_about(self, *_):
+        Adw.AboutDialog(
+            application_name="Spider",
+            application_icon="org.domain.Spider",
+            developer_name="Omar Khalid",
+            version=__version__,
+            website="https://github.com/OMARxKHALID/spider",
+            issue_url="https://github.com/OMARxKHALID/spider/issues",
+            copyright="© 2026 Omar Khalid",
+            license_type=Gtk.License.GPL_3_0,
+        ).present(self.win)
 
     def do_shutdown(self):
         logger.info("App: Shutting down")
-        if self.win and hasattr(self.win, 'coordinator'):
-            self.win.coordinator.shutdown()
-        Gio.Application.do_shutdown(self)
+        if self.win:
+            try:
+                self.win.coordinator.shutdown()
+            except Exception:
+                logger.exception("App: Error during shutdown")
+        Adw.Application.do_shutdown(self)

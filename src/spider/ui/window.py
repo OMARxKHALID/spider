@@ -1,57 +1,52 @@
-import gi
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GObject
 import logging
-import os
+
+from gi.repository import Gtk, Adw, Gio, GLib, Gdk
+
+from spider.core.models import OCRResult
+from spider.ui import icon_button, pill_button, word_count
 
 logger = logging.getLogger(__name__)
 
+CAPTURE_HIDE_DELAY_MS = 300
+IDLE_TITLE = "Capture Text"
+IDLE_DESCRIPTION = "Select an area of the screen or open an image to extract its text"
+
+
 class SpiderWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(title="Spider", default_width=800, default_height=600, **kwargs)
+        self.set_size_request(360, 300)
         logger.info("UI: Initializing main window")
-        
+
         from spider.core.coordinator import PipelineCoordinator
         self.coordinator = PipelineCoordinator(self)
 
-        self.set_title("Spider")
-        self.set_default_size(800, 600)
-        self.set_size_request(400, 300)
-        self._file_dialog = None
         self._capture_timeout_id = 0
-
-        self._history_view = None
         self._history_page = None
         self._result_page = None
-        self.text_view = None
-        self.copy_btn = None
-        self.stats_label = None
-        self.result_title = None
-        self._file_dialog = None
+
+        for name, callback in (
+            ("capture", self._on_capture),
+            ("open", self._on_open),
+            ("history", self._on_toggle_history),
+        ):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", callback)
+            self.add_action(action)
 
         self.toast_overlay = Adw.ToastOverlay()
-        self.set_content(self.toast_overlay)
-
         self.nav_view = Adw.NavigationView()
         self.toast_overlay.set_child(self.nav_view)
+        self.set_content(self.toast_overlay)
 
         self.home_page = self._create_home_page()
         self.nav_view.push(self.home_page)
 
-        self._setup_shortcuts()
-
-    @property
-    def history_view(self):
-        if self._history_view is None:
-            from spider.ui.history import HistoryView
-            self._history_view = HistoryView(self.coordinator.db, on_item_selected=self._on_history_item_selected)
-        return self._history_view
-
     @property
     def history_page(self):
         if self._history_page is None:
-            self._history_page = self._create_history_page()
+            from spider.ui.history import HistoryPage
+            self._history_page = HistoryPage(self.coordinator.db, self._on_history_item_selected, self.add_toast)
         return self._history_page
 
     @property
@@ -60,402 +55,175 @@ class SpiderWindow(Adw.ApplicationWindow):
             self._result_page = self._create_result_page()
         return self._result_page
 
-    def _setup_shortcuts(self):
-        controller = Gtk.ShortcutController()
-
-        capture_trigger = Gtk.ShortcutTrigger.parse_string("<Control><Shift>C")
-        capture_action = Gtk.CallbackAction.new(lambda *_: [self.on_capture_clicked(None), True][-1])
-        capture_shortcut = Gtk.Shortcut.new(capture_trigger, capture_action)
-        controller.add_shortcut(capture_shortcut)
-
-        history_trigger = Gtk.ShortcutTrigger.parse_string("<Control>H")
-        def toggle_history(*_):
-            if self.nav_view.get_visible_page() == self.history_page:
-                self.nav_view.pop()
-            else:
-                self.nav_view.push(self.history_page)
-            return True
-        history_action = Gtk.CallbackAction.new(toggle_history)
-        history_shortcut = Gtk.Shortcut.new(history_trigger, history_action)
-        controller.add_shortcut(history_shortcut)
-
-        copy_trigger = Gtk.ShortcutTrigger.parse_string("<Control>C")
-        def do_copy(*_):
-            if self._result_page is not None and self.nav_view.get_visible_page() == self._result_page:
-                focus_widget = self.get_focus()
-                if focus_widget != self.text_view:
-                    self._on_copy_result_clicked(self.copy_btn)
-                    return True
-            return False
-        copy_action = Gtk.CallbackAction.new(do_copy)
-        copy_shortcut = Gtk.Shortcut.new(copy_trigger, copy_action)
-        controller.add_shortcut(copy_shortcut)
-
-        new_cap_trigger = Gtk.ShortcutTrigger.parse_string("<Control>N")
-        new_cap_action = Gtk.CallbackAction.new(lambda *_: [self.on_capture_clicked(None), True][-1])
-        new_cap_shortcut = Gtk.Shortcut.new(new_cap_trigger, new_cap_action)
-        controller.add_shortcut(new_cap_shortcut)
-
-        open_trigger = Gtk.ShortcutTrigger.parse_string("<Control>O")
-        open_action = Gtk.CallbackAction.new(lambda *_: [self.on_open_clicked(None), True][-1])
-        open_shortcut = Gtk.Shortcut.new(open_trigger, open_action)
-        controller.add_shortcut(open_shortcut)
-
-        self.add_controller(controller)
-
     def _create_home_page(self):
-        status_page = Adw.StatusPage()
-        status_page.set_title("Ready to Capture")
-        status_page.set_description("Press the capture button or use Ctrl+Shift+C")
-        status_page.set_icon_name("org.domain.Spider")
+        self.status_page = Adw.StatusPage(icon_name="org.domain.Spider", title=IDLE_TITLE, description=IDLE_DESCRIPTION)
 
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
-        btn_box.set_halign(Gtk.Align.CENTER)
-        btn_box.set_margin_top(24)
+        buttons = Gtk.Box(spacing=12, homogeneous=True, halign=Gtk.Align.CENTER)
+        narrow = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 500sp"))
+        narrow.add_setter(buttons, "orientation", Gtk.Orientation.VERTICAL)
+        self.add_breakpoint(narrow)
+        buttons.append(pill_button("_Capture Region", "camera-photo-symbolic", "suggested-action", action_name="win.capture"))
+        buttons.append(pill_button("_Open Image", "image-x-generic-symbolic", action_name="win.open"))
 
-        self.capture_btn = Gtk.Button(label="Capture Region")
-        self.capture_btn.add_css_class("suggested-action")
-        self.capture_btn.add_css_class("pill")
-        self.capture_btn.set_size_request(160, 44)
-        self.capture_btn.connect("clicked", self.on_capture_clicked)
-        btn_box.append(self.capture_btn)
+        self.spinner = Gtk.Spinner(width_request=32, height_request=32, halign=Gtk.Align.CENTER, visible=False)
 
-        self.open_btn = Gtk.Button(label="Open Image")
-        self.open_btn.add_css_class("suggested-action")
-        self.open_btn.add_css_class("pill")
-        self.open_btn.set_size_request(160, 44)
-        self.open_btn.connect("clicked", self.on_open_clicked)
-        btn_box.append(self.open_btn)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        box.append(buttons)
+        box.append(self.spinner)
+        self.status_page.set_child(box)
 
-        self.spinner = Gtk.Spinner()
-        self.spinner.set_halign(Gtk.Align.CENTER)
-        self.spinner.set_margin_top(24)
-        
-        status_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        status_box.append(btn_box)
-        status_box.append(self.spinner)
-        
-        status_page.set_child(status_box)
+        menu = Gio.Menu()
+        menu.append("_Preferences", "app.preferences")
+        menu.append("_About Spider", "app.about")
+        menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True, tooltip_text="Main Menu")
 
-        toolbar_view = Adw.ToolbarView()
-        header_bar = Adw.HeaderBar()
-        self.home_title = Adw.WindowTitle(title="Spider")
-        header_bar.set_title_widget(self.home_title)
+        header = Adw.HeaderBar()
+        header.pack_start(icon_button("document-open-recent-symbolic", "History", action_name="win.history"))
+        header.pack_end(menu_button)
 
-        history_btn = Gtk.Button(icon_name="document-open-recent-symbolic")
-        history_btn.set_tooltip_text("History")
-        history_btn.update_property(
-            [Gtk.AccessibleProperty.LABEL], ["View History"]
-        )
-        history_btn.connect("clicked", lambda x: self.nav_view.push(self.history_page))
-        header_bar.pack_start(history_btn)
+        self.problem_banner = Adw.Banner(button_label="_Preferences", action_name="app.preferences", use_markup=False)
 
-        menu = Gio.Menu.new()
-        menu.append("Preferences", "app.preferences")
-        menu.append("Keyboard Shortcuts", "win.shortcuts")
-        menu.append("About Spider", "app.about")
-
-        self.menu_btn = Gtk.MenuButton(icon_name="open-menu-symbolic")
-        self.menu_btn.set_menu_model(menu)
-        self.menu_btn.set_tooltip_text("Main Menu")
-        self.menu_btn.update_property([Gtk.AccessibleProperty.LABEL], ["Main Menu"])
-        header_bar.pack_end(self.menu_btn)
-
-        action = Gio.SimpleAction.new("shortcuts", None)
-        action.connect("activate", self._on_shortcuts_clicked)
-        self.add_action(action)
-
-        toolbar_view.add_top_bar(header_bar)
-        toolbar_view.set_content(status_page)
-
-        page = Adw.NavigationPage.new(toolbar_view, "home")
-        page.set_title("Spider")
-        self._home_status_page = status_page
-        return page
+        toolbar = Adw.ToolbarView(content=self.status_page)
+        toolbar.add_top_bar(header)
+        toolbar.add_top_bar(self.problem_banner)
+        return Adw.NavigationPage(child=toolbar, title="Spider", tag="home")
 
     def _create_result_page(self):
-        self.text_view = Gtk.TextView()
-        self.text_view.set_editable(True)
-        self.text_view.set_wrap_mode(Gtk.WrapMode.WORD)
-        self.text_view.add_css_class("card")
-        self.text_view.set_margin_start(12)
-        self.text_view.set_margin_end(12)
-        self.text_view.set_margin_top(12)
-        self.text_view.set_margin_bottom(12)
-        self.text_view.set_left_margin(24)
-        self.text_view.set_right_margin(24)
-        self.text_view.set_top_margin(24)
-        self.text_view.set_bottom_margin(24)
-
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_child(self.text_view)
-        scroll.set_vexpand(True)
-
-        clamp = Adw.Clamp()
-        clamp.set_maximum_size(800)
-
-        self.stats_label = Gtk.Label()
-        self.stats_label.add_css_class("dim-label")
-        self.stats_label.set_margin_top(8)
-        self.stats_label.set_margin_bottom(12)
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        box.append(scroll)
-        box.append(self.stats_label)
-
-        clamp.set_child(box)
-        clamp.set_margin_start(24)
-        clamp.set_margin_end(24)
-        clamp.set_margin_top(24)
-        clamp.set_margin_bottom(24)
-
-        toolbar_view = Adw.ToolbarView()
-        header_bar = Adw.HeaderBar()
-        self.result_title = Adw.WindowTitle(title="OCR Result")
-        header_bar.set_title_widget(self.result_title)
-
-        new_cap_btn = Gtk.Button(icon_name="camera-photo-symbolic")
-        new_cap_btn.set_tooltip_text("New Capture")
-        new_cap_btn.update_property(
-            [Gtk.AccessibleProperty.LABEL], ["New Capture"]
+        self.text_view = Gtk.TextView(
+            wrap_mode=Gtk.WrapMode.WORD_CHAR,
+            top_margin=18, bottom_margin=18, left_margin=18, right_margin=18,
+            css_classes=["card"],
         )
-        new_cap_btn.connect("clicked", self.on_capture_clicked)
-        header_bar.pack_end(new_cap_btn)
+        self.text_view.update_property([Gtk.AccessibleProperty.LABEL], ["Extracted text"])
 
-        self.copy_btn = Gtk.Button(icon_name="edit-copy-symbolic")
-        self.copy_btn.set_tooltip_text("Copy Text")
-        self.copy_btn.update_property(
-            [Gtk.AccessibleProperty.LABEL], ["Copy Text"]
+        scrolled = Gtk.ScrolledWindow(
+            child=Adw.Clamp(child=self.text_view, maximum_size=900, margin_top=12, margin_bottom=24, margin_start=12, margin_end=12),
+            vexpand=True,
         )
-        self.copy_btn.connect("clicked", self._on_copy_result_clicked)
-        header_bar.pack_end(self.copy_btn)
 
-        toolbar_view.add_top_bar(header_bar)
-        toolbar_view.set_content(clamp)
+        self.result_title = Adw.WindowTitle(title="Extracted Text")
+        header = Adw.HeaderBar(title_widget=self.result_title)
+        header.pack_end(icon_button("camera-photo-symbolic", "New Capture", action_name="win.capture"))
+        header.pack_end(icon_button("edit-copy-symbolic", "Copy Text", self._on_copy_result))
 
-        page = Adw.NavigationPage.new(toolbar_view, "result")
-        page.set_title("OCR Result")
-        return page
+        toolbar = Adw.ToolbarView(content=scrolled)
+        toolbar.add_top_bar(header)
+        return Adw.NavigationPage(child=toolbar, title="Extracted Text", tag="result")
 
-    def _create_history_page(self):
-        toolbar_view = Adw.ToolbarView()
-        header_bar = Adw.HeaderBar()
+    def _on_toggle_history(self, *_):
+        if self.nav_view.get_visible_page() == self._history_page:
+            self.nav_view.pop()
+        else:
+            self._show_page(self.history_page)
 
-        self.history_title = Adw.WindowTitle(title="History")
-        header_bar.set_title_widget(self.history_title)
+    def _show_page(self, page):
+        stack = self.nav_view.get_navigation_stack()
+        if page in (stack.get_item(i) for i in range(stack.get_n_items())):
+            self.nav_view.pop_to_page(page)
+        else:
+            self.nav_view.push(page)
 
-        search_btn = Gtk.ToggleButton(icon_name="system-search-symbolic")
-        search_btn.set_tooltip_text("Search History")
-        search_btn.update_property(
-            [Gtk.AccessibleProperty.LABEL], ["Search History"]
-        )
-        header_bar.pack_start(search_btn)
-
-        clear_btn = Gtk.Button(icon_name="edit-clear-all-symbolic")
-        clear_btn.set_tooltip_text("Clear All")
-        clear_btn.update_property(
-            [Gtk.AccessibleProperty.LABEL], ["Clear All History"]
-        )
-        clear_btn.add_css_class("destructive-action")
-        clear_btn.connect("clicked", self._on_clear_history_clicked)
-        header_bar.pack_end(clear_btn)
-
-        self.search_bar_widget = Gtk.SearchBar()
-        self.search_bar_widget.connect_entry(self.history_view.search_bar)
-        self.search_bar_widget.set_child(self.history_view.search_bar)
-        search_btn.connect("toggled", lambda b: self.search_bar_widget.set_search_mode(b.get_active()) if self.search_bar_widget else None)
-
-        toolbar_view.add_top_bar(header_bar)
-        toolbar_view.add_top_bar(self.search_bar_widget)
-
-        self.history_view.set_margin_start(24)
-        self.history_view.set_margin_end(24)
-        self.history_view.set_margin_top(24)
-        self.history_view.set_margin_bottom(24)
-
-        toolbar_view.set_content(self.history_view)
-
-        page = Adw.NavigationPage.new(toolbar_view, "history")
-        page.set_title("History")
-        return page
-
-    def on_capture_clicked(self, button):
+    def _on_capture(self, *_):
         logger.info("UI: Capture requested")
         if self.coordinator.is_busy:
             return
-
-        if self.nav_view.get_visible_page() != self.home_page:
-            self.nav_view.pop_to_page(self.home_page)
-
-        self.capture_btn.set_sensitive(False)
-        self.open_btn.set_sensitive(False)
-        self._home_status_page.set_title("Capturing...")
-        self.spinner.start()
-
+        self.nav_view.pop_to_page(self.home_page)
+        self.show_processing()
         self.set_visible(False)
+
+        def start():
+            self._capture_timeout_id = 0
+            if not self.coordinator.start_capture_flow():
+                self.show_idle()
+            return GLib.SOURCE_REMOVE
+
         if self._capture_timeout_id:
             GLib.source_remove(self._capture_timeout_id)
-        
-        def _timeout_cb():
-            self._capture_timeout_id = 0
-            self.coordinator.start_capture_flow()
-            return False
+        self._capture_timeout_id = GLib.timeout_add(CAPTURE_HIDE_DELAY_MS, start)
 
-        self._capture_timeout_id = GLib.timeout_add(300, _timeout_cb)
-
-    def on_open_clicked(self, button):
+    def _on_open(self, *_):
         logger.info("UI: Open image requested")
-        self._file_dialog = Gtk.FileDialog.new()
-        self._file_dialog.set_title("Open Image")
-
+        image_filter = Gtk.FileFilter(name="Images", mime_types=["image/png", "image/jpeg", "image/tiff", "image/webp", "image/bmp"])
         filters = Gio.ListStore.new(Gtk.FileFilter)
-        image_filter = Gtk.FileFilter()
-        image_filter.set_name("Images")
-        image_filter.add_mime_type("image/png")
-        image_filter.add_mime_type("image/jpeg")
-        image_filter.add_mime_type("image/tiff")
         filters.append(image_filter)
-        self._file_dialog.set_filters(filters)
+        dialog = Gtk.FileDialog(title="Open Image", filters=filters, default_filter=image_filter)
+        dialog.open(self, None, self._on_open_finished)
 
-        self._file_dialog.open(self, None, self._on_file_open_done)
-
-    def _on_file_open_done(self, dialog, result):
+    def _on_open_finished(self, dialog, result):
         try:
             file = dialog.open_finish(result)
         except GLib.Error as e:
-            if e.code == 2:
-                return
-            logger.error("UI: File dialog error: %s", e.message)
-            self.add_toast(f"Failed to open: {e.message}")
-            return
-        except Exception as e:
-            logger.error("UI: Failed to open image: %s", e)
-            self.add_toast(f"Failed to open image: {str(e)}")
+            if not e.matches(Gtk.dialog_error_quark(), Gtk.DialogError.DISMISSED):
+                logger.error("UI: File dialog error: %s", e.message)
+                self.add_toast(f"Could not open image: {e.message}")
             return
 
-        if file:
-            path = file.get_path()
-            logger.info("UI: Opening local image: %s", path)
-            self.add_toast("Processing Image...")
-            self._home_status_page.set_title("Processing...")
-            self.spinner.start()
-            self.coordinator.process_image(path)
+        path = file.get_path()
+        logger.info("UI: Opening local image: %s", path)
+        if not path:
+            self.add_toast("Only local images can be opened")
+        elif not self.coordinator.process_image(path):
+            self.add_toast("Still processing the previous image")
 
     def _on_history_item_selected(self, item):
-        logger.info("UI: Historical item selected: %d", item['id'])
-        from spider.core.models import OCRResult
-        result = OCRResult(
-            text=item['text'],
-            confidence=item['confidence'] if item['confidence'] is not None else 0.0,
-            engine_used=item['engine_used'],
-            timestamp=item['timestamp'],
-            language=item['language']
-        )
-        self.show_result(result)
+        logger.info("UI: History item selected: %d", item["id"])
+        self.show_result(OCRResult(
+            text=item["text"],
+            confidence=item["confidence"] or 0.0,
+            engine_used=item["engine_used"],
+            timestamp=item["timestamp"],
+            language=item["language"],
+        ))
 
     def show_result(self, result):
-        logger.info("UI: Displaying OCR result (%d characters)", len(result.text))
-        _ = self.result_page 
-        self._home_status_page.set_title("Ready to Capture")
-        self.spinner.stop()
-        self.home_title.set_subtitle("")
-        self.capture_btn.set_sensitive(True)
-        self.open_btn.set_sensitive(True)
-
-        self.set_visible(True)
-        self.present()
-        self.text_view.grab_focus()
-
-        if not result.text or not result.text.strip():
-            self.add_toast("No text detected")
+        self._reveal()
+        if not result.text.strip():
+            self.add_toast("No text found")
             return
 
-        buffer = self.text_view.get_buffer()
-        buffer.set_text(result.text, -1)
+        logger.info("UI: Displaying OCR result (%d characters)", len(result.text))
+        page = self.result_page
+        self.text_view.get_buffer().set_text(result.text, -1)
+        self.result_title.set_subtitle(f"{word_count(result.text)} · {result.confidence:.0%} confidence")
+        self._show_page(page)
 
-        word_count = len(result.text.split())
-        char_count = len(result.text)
-        accuracy = result.confidence * 100
-        self.stats_label.set_label(f"{word_count} words · {char_count} characters · {accuracy:.1f}% accuracy")
-        self.result_title.set_subtitle(f"{result.engine_used.title()} Engine · {accuracy:.0f}% confidence")
+    def _reveal(self):
+        if not self.get_visible():
+            self.set_visible(True)
+            self.present()
 
-        if self.nav_view.get_visible_page() != self.result_page:
-            self.nav_view.push(self.result_page)
+    def _set_busy(self, busy):
+        for name in ("capture", "open"):
+            self.lookup_action(name).set_enabled(not busy)
+        self.spinner.set_visible(busy)
+        self.spinner.set_spinning(busy)
 
-        if self._history_view:
-            self.history_view.refresh()
+    def show_processing(self):
+        self._set_busy(True)
+        self.status_page.set_title("Extracting Text…")
+        self.status_page.set_description(None)
 
-    def set_processing_state(self):
-        self.set_visible(True)
-        self.present()
-        self._home_status_page.set_title("Processing...")
-        self.spinner.start()
-        self.capture_btn.set_sensitive(False)
-        self.open_btn.set_sensitive(False)
+    def show_idle(self):
+        self._reveal()
+        self._set_busy(False)
+        self.status_page.set_title(IDLE_TITLE)
+        self.status_page.set_description(IDLE_DESCRIPTION)
 
-    def reset_home_title(self):
-        self.set_visible(True)
-        self.present()
-        self._home_status_page.set_title("Ready to Capture")
-        self.spinner.stop()
-        self.home_title.set_subtitle("")
-        self.capture_btn.set_sensitive(True)
-        self.open_btn.set_sensitive(True)
-
-    def _on_copy_result_clicked(self, btn):
-        logger.info("UI: Copying result to clipboard")
+    def _on_copy_result(self, *_):
         buffer = self.text_view.get_buffer()
         text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
         self.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(text))
+        self.add_toast("Copied to clipboard")
 
-        btn.set_icon_name("emblem-ok-symbolic")
-        GLib.timeout_add(2000, lambda: [btn.set_icon_name("edit-copy-symbolic"), False][1])
-
-    def _on_clear_history_clicked(self, btn):
-        logger.info("UI: Clearing history")
-        self.coordinator.db.clear_history()
-        if self._history_view:
-            self.history_view.refresh()
-        self.add_toast("History cleared")
-
-    def _on_about_clicked(self, btn):
-        about = Adw.AboutDialog.new()
-        about.set_application_name("Spider")
-        about.set_application_icon("org.domain.Spider")
-        about.set_developer_name("omarxkhalid")
-        about.set_version("0.1.0")
-        about.set_website("https://github.com/omarxkhalid/spider")
-        about.set_copyright("© 2026 omarxkhalid")
-        about.present(self)
-
-    def _on_preferences_clicked(self, btn):
-        from spider.ui.preferences import SpiderPreferencesWindow
-        prefs = SpiderPreferencesWindow(transient_for=self)
-        prefs.present()
-
-    def _on_shortcuts_clicked(self, *args):
-        shortcuts = Gtk.ShortcutsWindow(transient_for=self)
-        
-        section = Gtk.ShortcutsSection()
-        group = Gtk.ShortcutsGroup(title="General")
-        
-        def add_shortcut(title, accel):
-            shortcut = Gtk.ShortcutsShortcut(title=title, accelerator=accel)
-            group.append(shortcut)
-
-        add_shortcut("New Capture", "<Control><Shift>C")
-        add_shortcut("Open Image", "<Control>O")
-        add_shortcut("Toggle History", "<Control>H")
-        add_shortcut("Copy Result", "<Control>C")
-        add_shortcut("Preferences", "<Control>comma")
-        add_shortcut("Keyboard Shortcuts", "<Control>question")
-        add_shortcut("Quit", "<Control>Q")
-        
-        section.append(group)
-        shortcuts.set_child(section)
-        shortcuts.present()
-
-    def add_toast(self, text):
-        toast = Adw.Toast.new(text)
-        toast.set_timeout(2)
+    def add_toast(self, title, button_label=None, on_button=None):
+        toast = Adw.Toast(title=title, use_markup=False)
+        if button_label:
+            toast.set_button_label(button_label)
+            toast.connect("button-clicked", lambda *_: on_button())
         self.toast_overlay.add_toast(toast)
+        return toast
+
+    def show_problem(self, message):
+        if message:
+            self.problem_banner.set_title(message)
+        self.problem_banner.set_revealed(bool(message))

@@ -1,5 +1,6 @@
 project('spider',
-          version: '0.1.0',
+          version: '1.1.0',
+          license: 'GPL-3.0-or-later',
     meson_version: '>= 0.62.0',
   default_options: [ 'warning_level=2' ],
 )
@@ -17,8 +18,6 @@ conf.set('BINDIR', join_paths(get_option('prefix'), get_option('bindir')))
 conf.set('DATADIR', join_paths(get_option('prefix'), get_option('datadir')))
 conf.set('PYTHON', py_installation.full_path())
 
-# WARNING: The launcher shebang is an absolute path set at build time.
-# If you move this project directory, re-run install.sh to rebuild the launcher.
 configure_file(
   input: 'spider.in',
   output: 'org.domain.Spider',
@@ -29,6 +28,11 @@ configure_file(
 
 subdir('data')
 subdir('src')
+
+appstreamcli = find_program('appstreamcli', required: false)
+if appstreamcli.found()
+  test('Validate AppStream metadata', appstreamcli, args: ['validate', '--no-net', files('data/org.domain.Spider.metainfo.xml')])
+endif
 
 gnome.post_install(
   glib_compile_schemas: true,

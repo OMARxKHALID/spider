@@ -1,159 +1,197 @@
-import gi
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, Gio, GLib, Gdk
-import datetime
 import logging
+import sqlite3
+
+from gi.repository import Gtk, Adw, GLib, Gdk, GObject
+
+from spider.ui import icon_button, pill_button, one_line, word_count, day_heading, clock_time
 
 logger = logging.getLogger(__name__)
 
-_HISTORY_CSS = "row .delete-button { opacity: 0; transition: opacity 0.2s; } row:hover .delete-button { opacity: 1; }"
+SEARCH_DELAY_MS = 250
 
-class HistoryView(Gtk.Box):
-    _css_loaded = False
 
-    def __init__(self, db_manager, on_item_selected=None, **kwargs):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12, **kwargs)
-        self.db = db_manager
-        self.on_item_selected = on_item_selected
-        
-        self.search_bar = Gtk.SearchEntry(placeholder_text="Search history...")
-        self.search_bar.connect("search-changed", self._on_search_changed)
-        self.search_bar.update_property([Gtk.AccessibleProperty.LABEL], ["Search history"])
-        
+class HistoryPage(Adw.NavigationPage):
+    def __init__(self, db, on_open_item, add_toast):
+        super().__init__(title="History", tag="history")
+        self.db = db
+        self.on_open_item = on_open_item
+        self.add_toast = add_toast
+        self._groups = []
         self._search_timeout_id = 0
-        self.stack = Gtk.Stack()
-        
-        self.empty_page = Adw.StatusPage()
-        self.empty_page.set_icon_name("document-open-recent-symbolic")
-        self.empty_page.set_title("No History Yet")
-        self.empty_page.set_description("Your captured text will appear here.")
-        
-        self.list_box = Gtk.ListBox()
-        self.list_box.add_css_class("boxed-list")
-        self.list_box.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.list_box.set_activate_on_single_click(True)
-        self.list_box.connect("row-activated", self._on_row_activated)
-        
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_vexpand(True)
-        scrolled.set_child(self.list_box)
-        
-        self.stack.add_named(self.empty_page, "empty")
-        self.stack.add_named(scrolled, "list")
-        self.append(self.stack)
-        
-        self._load_css()
-        GLib.idle_add(self.refresh)
 
-    @classmethod
-    def _load_css(cls):
-        if cls._css_loaded:
-            return
-        provider = Gtk.CssProvider()
-        provider.load_from_string(_HISTORY_CSS)
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(), provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        search_button = Gtk.ToggleButton(icon_name="edit-find-symbolic", tooltip_text="Search")
+        search_button.update_property([Gtk.AccessibleProperty.LABEL], ["Search"])
+
+        header = Adw.HeaderBar()
+        header.pack_end(search_button)
+
+        self.search_entry = Gtk.SearchEntry(placeholder_text="Search history", hexpand=True)
+        self.search_entry.update_property([Gtk.AccessibleProperty.LABEL], ["Search history"])
+        self.search_entry.connect("search-changed", self._on_search_changed)
+        self.search_entry.connect("stop-search", lambda *_: search_button.set_active(False))
+
+        self.search_bar = Gtk.SearchBar(child=Adw.Clamp(child=self.search_entry, maximum_size=600))
+        self.search_bar.connect_entry(self.search_entry)
+        self.search_bar.set_key_capture_widget(self)
+        search_button.bind_property(
+            "active", self.search_bar, "search-mode-enabled",
+            GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE
         )
-        cls._css_loaded = True
 
-    def refresh(self, query=None):
+        self.list_page = Adw.PreferencesPage()
+
+        self.clear_group = Adw.PreferencesGroup()
+        clear_button = pill_button("_Clear History…", "user-trash-symbolic", on_clicked=self._on_clear_clicked)
+        clear_button.set_halign(Gtk.Align.CENTER)
+        self.clear_group.add(clear_button)
+
+        empty_page = Adw.StatusPage(
+            icon_name="document-open-recent-symbolic",
+            title="No History",
+            description="Text you capture will be listed here",
+        )
+        error_page = Adw.StatusPage(
+            icon_name="dialog-warning-symbolic",
+            title="Could Not Load History",
+            description="The history database could not be read",
+        )
+        no_results_page = Adw.StatusPage(
+            icon_name="edit-find-symbolic",
+            title="No Results Found",
+            description="Try a different search",
+        )
+
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+        self.stack.add_named(self.list_page, "list")
+        self.stack.add_named(empty_page, "empty")
+        self.stack.add_named(no_results_page, "no-results")
+        self.stack.add_named(error_page, "error")
+
+        toolbar = Adw.ToolbarView(content=self.stack)
+        toolbar.add_top_bar(header)
+        toolbar.add_top_bar(self.search_bar)
+        self.set_child(toolbar)
+
+        shortcuts = Gtk.ShortcutController(scope=Gtk.ShortcutScope.MANAGED)
+        shortcuts.add_shortcut(Gtk.Shortcut.new(
+            Gtk.ShortcutTrigger.parse_string("<Control>f"),
+            Gtk.CallbackAction.new(lambda *_: search_button.set_active(True) or True),
+        ))
+        self.add_controller(shortcuts)
+
+        self.connect("showing", lambda *_: self.refresh())
+
+    def refresh(self):
+        query = self.search_entry.get_text().strip()
         logger.info("UI: Refreshing history list (query: %s)", query)
-        if hasattr(self.list_box, "remove_all"):
-            self.list_box.remove_all()
-        else:
-            while (child := self.list_box.get_first_child()):
-                self.list_box.remove(child)
-            
-        if query:
-            items = self.db.search_history(query)
-        else:
-            items = self.db.get_history()
-            
-        if not items:
-            self.stack.set_visible_child_name("empty")
+
+        for group in self._groups:
+            self.list_page.remove(group)
+        self._groups.clear()
+        if self.clear_group.get_parent():
+            self.list_page.remove(self.clear_group)
+
+        try:
+            items = self.db.search_history(query) if query else self.db.get_history()
+        except sqlite3.Error:
+            logger.exception("UI: Could not load history")
+            self.stack.set_visible_child_name("error")
             return
-            
+
+        if not items:
+            self.stack.set_visible_child_name("no-results" if query else "empty")
+            return
+
+        if query:
+            self._add_group("Results", items)
+        else:
+            sections = {}
+            for item in items:
+                sections.setdefault(day_heading(item["timestamp"]), []).append(item)
+            for heading, section_items in sections.items():
+                self._add_group(heading, section_items)
+            self.list_page.add(self.clear_group)
+
         self.stack.set_visible_child_name("list")
 
+    def _add_group(self, title, items):
+        group = Adw.PreferencesGroup(title=title)
         for item in items:
-            row = Adw.ActionRow()
-            row.set_activatable(True)
-            row._item = item
-            
-            escaped_text = GLib.markup_escape_text(item['text'])
-            row.set_title(escaped_text)
-            row.set_title_lines(1)
-            
-            dt = datetime.datetime.fromtimestamp(item['timestamp'])
-            row.set_subtitle(f"{self._relative_time(dt)} • {item['engine_used'].title()}")
-            
-            copy_btn = Gtk.Button(icon_name="edit-copy-symbolic")
-            copy_btn.add_css_class("flat")
-            copy_btn.set_tooltip_text("Copy Text")
-            copy_btn.update_property(
-                [Gtk.AccessibleProperty.LABEL], ["Copy Text"]
-            )
-            copy_btn.connect("clicked", self._on_copy_clicked, item['text'])
-            row.add_suffix(copy_btn)
+            group.add(self._build_row(item))
+        self.list_page.add(group)
+        self._groups.append(group)
 
-            del_btn = Gtk.Button(icon_name="user-trash-symbolic")
-            del_btn.add_css_class("flat")
-            del_btn.add_css_class("destructive-action")
-            del_btn.add_css_class("delete-button")
-            del_btn.set_tooltip_text("Delete Item")
-            del_btn.update_property(
-                [Gtk.AccessibleProperty.LABEL], ["Delete Item"]
-            )
-            del_btn.connect("clicked", self._on_delete_clicked, item['id'])
-            row.add_suffix(del_btn)
-            
-            self.list_box.append(row)
+    def _build_row(self, item):
+        row = Adw.ActionRow(
+            title=one_line(item["text"]),
+            subtitle=f"{clock_time(item['timestamp'])} · {word_count(item['text'])}",
+            title_lines=1,
+            subtitle_lines=1,
+            use_markup=False,
+            activatable=True,
+        )
+        row.connect("activated", lambda *_: self.on_open_item(item))
 
-    def _on_row_activated(self, list_box, row):
-        item = getattr(row, "_item", None)
-        if self.on_item_selected and item:
-            self.on_item_selected(item)
-
-    def _relative_time(self, dt):
-        now = datetime.datetime.now()
-        diff = now - dt
-        seconds = diff.total_seconds()
-        if seconds < 60:
-            return "Just now"
-        elif seconds < 3600:
-            return f"{int(seconds // 60)} minutes ago"
-        elif seconds < 86400:
-            return f"{int(seconds // 3600)} hours ago"
-        elif diff.days == 1:
-            return "Yesterday"
-        elif diff.days < 7:
-            return f"{diff.days} days ago"
-        else:
-            return dt.strftime("%b %d")
+        copy_button = icon_button("edit-copy-symbolic", "Copy Text", lambda *_: self._copy(item["text"]))
+        delete_button = icon_button("user-trash-symbolic", "Delete", lambda *_: self._delete(item))
+        for button in (copy_button, delete_button):
+            button.set_valign(Gtk.Align.CENTER)
+            button.add_css_class("flat")
+            row.add_suffix(button)
+        return row
 
     def _on_search_changed(self, entry):
         if self._search_timeout_id:
             GLib.source_remove(self._search_timeout_id)
-        self._search_timeout_id = GLib.timeout_add(300, self._do_search, entry.get_text())
+        self._search_timeout_id = GLib.timeout_add(SEARCH_DELAY_MS, self._run_search)
 
-    def _do_search(self, query):
+    def _run_search(self):
         self._search_timeout_id = 0
-        self.refresh(query)
-        return False
+        self.refresh()
+        return GLib.SOURCE_REMOVE
 
-    def _on_copy_clicked(self, button, text):
-        logger.info("UI: Copying historical item to clipboard")
+    def _copy(self, text):
         self.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(text))
-        root = self.get_root()
-        if hasattr(root, "add_toast"):
-            root.add_toast("Copied to clipboard")
+        self.add_toast("Copied to clipboard")
 
-    def _on_delete_clicked(self, button, item_id):
-        logger.info("UI: Deleting historical item %d", item_id)
-        self.db.delete_result(item_id)
-        self.refresh(self.search_bar.get_text())
-        root = self.get_root()
-        if hasattr(root, "add_toast"):
-            root.add_toast("Item deleted")
+    def _delete(self, item):
+        logger.info("UI: Deleting history item %d", item["id"])
+        if not self._run_db(lambda: self.db.delete_result(item["id"]), "Could not delete capture"):
+            return
+        self.refresh()
+
+        def undo():
+            self._run_db(lambda: self.db.restore_result(item), "Could not restore capture")
+            self.refresh()
+
+        self.add_toast("Capture deleted", "_Undo", undo)
+
+    def _on_clear_clicked(self, button):
+        dialog = Adw.AlertDialog(
+            heading="Clear History?",
+            body="All saved captures will be permanently deleted.",
+            close_response="cancel",
+            default_response="cancel",
+        )
+        dialog.add_response("cancel", "_Cancel")
+        dialog.add_response("clear", "_Clear")
+        dialog.set_response_appearance("clear", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.connect("response", self._on_clear_response)
+        dialog.present(self)
+
+    def _on_clear_response(self, dialog, response):
+        if response != "clear":
+            return
+        logger.info("UI: Clearing history")
+        if self._run_db(self.db.clear_history, "Could not clear history"):
+            self.add_toast("History cleared")
+        self.refresh()
+
+    def _run_db(self, operation, failure_message):
+        try:
+            operation()
+            return True
+        except sqlite3.Error:
+            logger.exception("UI: %s", failure_message)
+            self.add_toast(failure_message)
+            return False

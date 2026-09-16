@@ -1,44 +1,51 @@
 import gi
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
+import sqlite3
 import threading
 import logging
-import time
+import weakref
+import os
+from spider.core.exceptions import CaptureError, EngineError, ImageDecodeError, ImageTooLargeError, describe_error, log_error
 
 logger = logging.getLogger(__name__)
 
+PIPELINE_TIMEOUT_SECONDS = 60
+FAILURE_BANNER_THRESHOLD = 3
+MAX_IMAGE_FILE_BYTES = 200 * 1024 * 1024
+INPUT_ERRORS = (ImageDecodeError, ImageTooLargeError, OSError)
+
+
 class PipelineCoordinator:
     def __init__(self, app_window):
-        self.window = app_window
+        self.window = weakref.ref(app_window)
         from spider.capture.portal import PortalCapture
         from spider.storage.db import DatabaseManager
         self.portal = PortalCapture()
-        self.ocr_engine = None
         self.db = DatabaseManager()
-        self._pipeline_event = threading.Event()
-        self._cancel_event = threading.Event()
+        self.ocr_engine = None
+        self._engine_error = ""
+        self._engine_lock = threading.RLock()
+        self._busy = False
+        self._run_generation = 0
         self._timeout_id = 0
         self._worker_thread = None
-        self._engine_lock = threading.RLock()
-        self._run_generation = 0
-        
+        self._failure_count = 0
+
         self.settings = Gio.Settings.new("org.domain.Spider")
-        self._engine_change_handler = self.settings.connect(
-            "changed::ocr-engine", self._on_engine_setting_changed
-        )
-        
+        self._settings_handler = self.settings.connect("changed", self._on_settings_changed)
+
         GLib.timeout_add_seconds(1, self.warm_up)
 
     @property
-    def is_busy(self):
-        return self._pipeline_event.is_set()
+    def is_busy(self) -> bool:
+        return self._busy
 
     def warm_up(self):
         if self.ocr_engine is None:
             logger.info("Core: Warming up OCR engine in background")
-            self._warmup_thread = threading.Thread(target=self._init_engine, daemon=True)
-            self._warmup_thread.start()
-        return False
+            threading.Thread(target=self._init_engine, daemon=True).start()
+        return GLib.SOURCE_REMOVE
 
     def _init_engine(self):
         with self._engine_lock:
@@ -47,194 +54,202 @@ class PipelineCoordinator:
 
             from spider.ocr.registry import EngineRegistry
             engine_id = self.settings.get_string("ocr-engine")
-            
+
             try:
                 descriptor = EngineRegistry.get(engine_id)
-            except KeyError:
-                logger.warning("Engine '%s' not found, falling back to tesseract", engine_id)
-                descriptor = EngineRegistry.get("tesseract")
 
-            available, reason = descriptor.check_available()
-            if not available:
-                logger.warning("Engine '%s' unavailable: %s", engine_id, reason)
-                descriptor = EngineRegistry.get("tesseract")
-                ok, why = descriptor.check_available()
-                if not ok:
-                    raise RuntimeError(f"No OCR engine available. Tried '{engine_id}': {reason}. Tried 'tesseract': {why}.")
+                available, reason = descriptor.check_available()
+                if not available:
+                    raise EngineError(f"{descriptor.display_name} is unavailable: {reason}")
 
-            try:
                 engine = descriptor.factory()
                 lang = self.settings.get_string("language")
                 if not engine.load_model(lang):
-                    raise RuntimeError(f"Engine '{descriptor.id}' failed to load language '{lang}'")
+                    raise EngineError(f"Language data for “{lang}” is not installed")
 
-                if descriptor.id == "tesseract":
-                    psm = self.settings.get_int("tesseract-psm")
-                    engine.configure({"psm": psm})
-
-                ok, message = engine.health_check()
-                if not ok:
-                    raise RuntimeError(f"Engine '{descriptor.id}' health check failed: {message}")
+                engine.configure({"psm": self.settings.get_int("tesseract-psm")})
 
                 self.ocr_engine = engine
+                self._engine_error = ""
                 logger.info("Core: OCR engine ready: %s (lang=%s)", descriptor.id, lang)
             except Exception as e:
-                logger.error("Core: Failed to initialize engine: %s", e)
+                self._engine_error = describe_error(e)
+                log_error(logger, "Core: Failed to initialize engine", e)
+            finally:
+                GLib.idle_add(self._update_banner)
 
-    def _on_engine_setting_changed(self, settings, key):
-        if self.is_busy:
-            return
+    def _on_settings_changed(self, settings, key):
+        logger.info("Core: Setting '%s' changed, reloading OCR engine", key)
         with self._engine_lock:
             self.ocr_engine = None
-        self._warmup_thread = threading.Thread(target=self._init_engine, daemon=True)
-        self._warmup_thread.start()
+            self._engine_error = ""
+        self._failure_count = 0
+        self._update_banner()
+        self.warm_up()
 
-    def _start_timeout(self):
+    def _update_banner(self):
+        win = self.window()
+        if not win:
+            return GLib.SOURCE_REMOVE
+        if self.ocr_engine is None and self._engine_error:
+            win.show_problem(self._engine_error)
+        elif self._failure_count >= FAILURE_BANNER_THRESHOLD:
+            win.show_problem("Text extraction failed several times in a row")
+        else:
+            win.show_problem(None)
+        return GLib.SOURCE_REMOVE
+
+    def _clear_timeout(self):
         if self._timeout_id:
             GLib.source_remove(self._timeout_id)
-        self._timeout_id = GLib.timeout_add_seconds(60, self._safety_unlock)
+            self._timeout_id = 0
 
-    def start_capture_flow(self):
-        if self.is_busy:
+    def _begin_run(self) -> bool:
+        if self._busy:
             logger.warning("Core: Pipeline busy, ignoring request")
-            return
-
-        self._pipeline_event.set()
-        self._cancel_event.clear()
+            return False
+        self._busy = True
         self._run_generation += 1
+        return True
+
+    def _end_run(self):
+        self._clear_timeout()
+        self._busy = False
+
+    def _is_stale(self, run_id) -> bool:
+        return run_id != self._run_generation
+
+    def start_capture_flow(self) -> bool:
+        if not self._begin_run():
+            return False
         logger.info("Core: Starting capture flow (gen %d)", self._run_generation)
-        self._start_timeout()
-        self.portal.capture_interactive(self._on_capture_complete)
+        try:
+            self.portal.capture_interactive(self._on_capture_complete)
+        except Exception as e:
+            log_error(logger, "Core: Could not start screenshot request", e)
+            self._on_capture_complete(CaptureError("io_failure", describe_error(e)))
+        return True
+
+    def process_image(self, path: str) -> bool:
+        if not self._begin_run():
+            return False
+        self._on_capture_complete(path)
+        return True
 
     def _safety_unlock(self):
         self._timeout_id = 0
-        if self._pipeline_event.is_set():
+        if self._busy:
             logger.warning("Core: Pipeline timeout reached")
-            self._cancel_event.set()
-            self._pipeline_event.clear()
-            if hasattr(self.window, "add_toast"):
-                self.window.add_toast("OCR is taking longer than expected...")
-        return False
-
-    def process_image(self, data: bytes | str):
-        if self.is_busy:
-            return
-        self._pipeline_event.set()
-        self._cancel_event.clear()
-        self._run_generation += 1
-        self._start_timeout()
-        self._on_capture_complete(data)
+            self._run_generation += 1
+            self._busy = False
+            win = self.window()
+            if win:
+                win.show_idle()
+                win.add_toast("Text extraction timed out")
+        return GLib.SOURCE_REMOVE
 
     def _on_capture_complete(self, input_data):
-        if not input_data:
-            if self._timeout_id:
-                GLib.source_remove(self._timeout_id)
-                self._timeout_id = 0
-            logger.warning("Core: Capture cancelled or failed")
-            self._pipeline_event.clear()
-            GLib.idle_add(self._reset_ui_state)
+        win = self.window()
+
+        if isinstance(input_data, CaptureError) or not input_data:
+            self._end_run()
+            if not win:
+                return
+            win.show_idle()
+            if not isinstance(input_data, CaptureError) or input_data.reason == "cancelled":
+                logger.info("Core: Capture cancelled")
+                return
+            logger.warning("Core: Capture failed: %s", input_data)
+            win.add_toast(f"Screenshot failed: {input_data}", "_Retry", lambda: win.activate_action("win.capture", None))
             return
 
         logger.info("Core: Image acquisition handoff complete")
         run_id = self._run_generation
+        self._timeout_id = GLib.timeout_add_seconds(PIPELINE_TIMEOUT_SECONDS, self._safety_unlock)
         self._worker_thread = threading.Thread(target=self._run_pipeline, args=(input_data, run_id), daemon=True)
         self._worker_thread.start()
-        GLib.idle_add(self._update_processing_ui)
+        if win:
+            win.show_processing()
 
     def _run_pipeline(self, input_data, run_id):
         logger.info("Core: Starting processing pipeline (gen %d)", run_id)
-        
         try:
-            image_bytes = None
             if isinstance(input_data, str):
-                try:
-                    logger.info("Core: Reading image file: %s", input_data)
-                    with open(input_data, "rb") as f:
-                        image_bytes = f.read()
-                except Exception as e:
-                    logger.error("Core: Failed to read input file: %s", e)
-                    GLib.idle_add(self._on_pipeline_error, f"Read error: {str(e)}", run_id)
-                    return
+                logger.info("Core: Reading image file: %s", input_data)
+                if os.path.getsize(input_data) > MAX_IMAGE_FILE_BYTES:
+                    raise ImageTooLargeError()
+                with open(input_data, "rb") as f:
+                    image_bytes = f.read()
             else:
                 image_bytes = input_data
 
             from spider.vision.preprocessor import Preprocessor
-            
-            if self._cancel_event.is_set():
-                raise TimeoutError("Pipeline aborted: timeout")
-
             processed_img = Preprocessor.process_image(image_bytes)
-
-            if self._cancel_event.is_set():
-                raise TimeoutError("Pipeline aborted: timeout")
+            if self._is_stale(run_id):
+                return
 
             with self._engine_lock:
                 if self.ocr_engine is None:
                     self._init_engine()
                 engine = self.ocr_engine
-
             if engine is None:
-                raise RuntimeError("No OCR engine available")
+                raise EngineError(self._engine_error or "No OCR engine available")
 
             result = engine.recognize(processed_img)
-            result.image_bytes = image_bytes
+            if self._is_stale(run_id):
+                return
 
-            if self._cancel_event.is_set():
-                raise TimeoutError("Pipeline aborted: timeout")
-
-            if result.text and result.text.strip():
+            saved = True
+            if result.text.strip():
                 logger.info("Core: Saving results to database")
-                self.db.save_result(result)
+                try:
+                    self.db.save_result(result)
+                except sqlite3.Error:
+                    logger.exception("Core: Could not save result to history")
+                    saved = False
 
-            GLib.idle_add(self._on_pipeline_finished, result, run_id)
+            GLib.idle_add(self._on_pipeline_finished, result, run_id, saved)
         except Exception as e:
-            logger.error("Core: Pipeline error: %s", e)
-            GLib.idle_add(self._on_pipeline_error, str(e), run_id)
-        finally:
-            self._pipeline_event.clear()
+            log_error(logger, "Core: Pipeline error", e)
+            GLib.idle_add(self._on_pipeline_error, describe_error(e), isinstance(e, INPUT_ERRORS), run_id)
 
-    def _on_pipeline_finished(self, result, run_id):
-        if self.window is None:
+    def _on_pipeline_finished(self, result, run_id, saved=True):
+        if self._is_stale(run_id):
             return GLib.SOURCE_REMOVE
-        if run_id != self._run_generation:
-            return GLib.SOURCE_REMOVE
-        if self._timeout_id:
-            GLib.source_remove(self._timeout_id)
-            self._timeout_id = 0
+        self._end_run()
         logger.info("Core: Pipeline execution complete")
-        if hasattr(self.window, "show_result"):
-            self.window.show_result(result)
+        self._failure_count = 0
+        self._update_banner()
+        win = self.window()
+        if win:
+            win.show_idle()
+            win.show_result(result)
+            if not saved:
+                win.add_toast("Text extracted, but it could not be saved to history")
         return GLib.SOURCE_REMOVE
 
-    def _on_pipeline_error(self, error_msg, run_id):
-        if self.window is None:
+    def _on_pipeline_error(self, message, input_error, run_id):
+        if self._is_stale(run_id):
             return GLib.SOURCE_REMOVE
-        if run_id != self._run_generation:
-            return GLib.SOURCE_REMOVE
-        if self._timeout_id:
-            GLib.source_remove(self._timeout_id)
-            self._timeout_id = 0
-        self._reset_ui_state()
-        if hasattr(self.window, "add_toast"):
-            self.window.add_toast(f"Error: {error_msg}")
-        return GLib.SOURCE_REMOVE
-
-    def _update_processing_ui(self):
-        if self.window and hasattr(self.window, "set_processing_state"):
-            self.window.set_processing_state()
-        return GLib.SOURCE_REMOVE
-
-    def _reset_ui_state(self):
-        if self.window is None:
-            return GLib.SOURCE_REMOVE
-        if hasattr(self.window, "reset_home_title"):
-            self.window.reset_home_title()
+        self._end_run()
+        if not input_error:
+            self._failure_count += 1
+            if self._failure_count >= FAILURE_BANNER_THRESHOLD:
+                with self._engine_lock:
+                    self.ocr_engine = None
+        self._update_banner()
+        win = self.window()
+        if win:
+            win.show_idle()
+            win.add_toast(message)
         return GLib.SOURCE_REMOVE
 
     def shutdown(self):
-        if self._engine_change_handler:
-            self.settings.disconnect(self._engine_change_handler)
-        self._cancel_event.set()
+        if self._settings_handler:
+            self.settings.disconnect(self._settings_handler)
+            self._settings_handler = 0
+        self._clear_timeout()
+        self._run_generation += 1
         if self._worker_thread and self._worker_thread.is_alive():
             logger.info("Core: Waiting for worker thread...")
             self._worker_thread.join(timeout=5.0)

@@ -1,6 +1,5 @@
 import sqlite3
 import os
-import re
 import threading
 from typing import List, Optional
 from spider.core.models import OCRResult
@@ -8,16 +7,23 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+HISTORY_LIMIT = 500
+HISTORY_COLUMNS = "id, timestamp, text, engine_used, language, confidence"
+
+
+def default_db_path() -> str:
+    xdg_data = os.getenv('XDG_DATA_HOME') or os.path.join(os.path.expanduser('~'), '.local', 'share')
+    return os.path.join(xdg_data, 'spider', 'history.db')
+
+
 class DatabaseManager:
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            xdg_data = os.getenv('XDG_DATA_HOME', 
-                                 os.path.join(os.path.expanduser('~'), '.local', 'share'))
-            data_dir = os.path.join(xdg_data, 'spider')
+            db_path = default_db_path()
+            data_dir = os.path.dirname(db_path)
             os.makedirs(data_dir, exist_ok=True)
             os.chmod(data_dir, 0o700)
-            db_path = os.path.join(data_dir, "history.db")
-        
+
         self.db_path = db_path
         self._local = threading.local()
         self._all_connections = []
@@ -26,10 +32,9 @@ class DatabaseManager:
 
     @property
     def connection(self):
-        if not hasattr(self._local, "conn") or self._local.conn is None:
+        if getattr(self._local, "conn", None) is None:
             with self._conn_lock:
                 conn = sqlite3.connect(self.db_path, check_same_thread=False)
-                conn.execute("PRAGMA journal_mode=WAL")
                 conn.row_factory = sqlite3.Row
                 self._all_connections.append(conn)
                 self._local.conn = conn
@@ -43,20 +48,25 @@ class DatabaseManager:
                 except Exception:
                     pass
             self._all_connections.clear()
-        if hasattr(self._local, "conn"):
-            self._local.conn = None
+        self._local.conn = None
 
     def _init_db(self):
         conn = sqlite3.connect(self.db_path)
-        SCHEMA_VERSION = 2
-        cur = conn.cursor()
+        schema_version = 3
         try:
-            cur.execute("PRAGMA user_version")
-            version = cur.fetchone()[0]
+            if conn.execute("PRAGMA auto_vacuum").fetchone()[0] == 0:
+                has_tables = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
+                conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
+                if has_tables:
+                    logger.info("DB: Enabling incremental auto-vacuum")
+                    try:
+                        conn.execute("VACUUM")
+                    except sqlite3.OperationalError as e:
+                        logger.warning("DB: Could not enable auto-vacuum, will retry next start: %s", e)
 
-            if version < SCHEMA_VERSION:
-                logger.info("DB: Initializing database schema (v%d)", SCHEMA_VERSION)
-                cur.execute("""
+            if conn.execute("PRAGMA user_version").fetchone()[0] < schema_version:
+                logger.info("DB: Initializing database schema (v%d)", schema_version)
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS history (
                         id          INTEGER PRIMARY KEY AUTOINCREMENT,
                         timestamp   REAL    NOT NULL,
@@ -67,9 +77,8 @@ class DatabaseManager:
                         confidence  REAL
                     )
                 """)
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp)")
-                
-                cur.execute("""
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp)")
+                conn.execute("""
                     CREATE VIRTUAL TABLE IF NOT EXISTS history_fts USING fts5(
                         text,
                         content='history',
@@ -77,123 +86,104 @@ class DatabaseManager:
                         tokenize='trigram'
                     )
                 """)
-                
-                cur.execute("SELECT count(*) FROM history_fts")
-                if cur.fetchone()[0] == 0:
-                    cur.execute("INSERT OR IGNORE INTO history_fts(rowid, text) SELECT id, text FROM history")
-                
-                cur.execute("""
-                    CREATE TRIGGER IF NOT EXISTS history_ai AFTER INSERT ON history BEGIN
-                        INSERT INTO history_fts(rowid, text) VALUES (new.id, new.text);
-                    END
-                """)
-                cur.execute("""
-                    CREATE TRIGGER IF NOT EXISTS history_ad AFTER DELETE ON history BEGIN
-                        INSERT INTO history_fts(history_fts, rowid, text)
-                        VALUES ('delete', old.id, old.text);
-                    END
-                """)
-                cur.execute("""
-                    CREATE TRIGGER IF NOT EXISTS history_au AFTER UPDATE ON history BEGIN
-                        INSERT INTO history_fts(history_fts, rowid, text)
-                            VALUES ('delete', old.id, old.text);
-                        INSERT INTO history_fts(rowid, text)
-                            VALUES (new.id, new.text);
-                    END
-                """)
-                
-                cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                conn.execute("INSERT INTO history_fts(history_fts) VALUES('rebuild')")
+                conn.execute(f"PRAGMA user_version = {schema_version}")
                 conn.commit()
-            
-            cur.execute("PRAGMA journal_mode=WAL")
+
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS history_ai AFTER INSERT ON history BEGIN
+                    INSERT INTO history_fts(rowid, text) VALUES (new.id, new.text);
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS history_ad AFTER DELETE ON history BEGIN
+                    INSERT INTO history_fts(history_fts, rowid, text)
+                    VALUES ('delete', old.id, old.text);
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS history_au AFTER UPDATE ON history BEGIN
+                    INSERT INTO history_fts(history_fts, rowid, text)
+                        VALUES ('delete', old.id, old.text);
+                    INSERT INTO history_fts(rowid, text)
+                        VALUES (new.id, new.text);
+                END
+            """)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.commit()
         finally:
-            cur.close()
             conn.close()
 
-    def _sanitize_fts_query(self, query: str) -> str:
-        clean = re.sub(r'[^\w\s]', ' ', query, flags=re.UNICODE)
-        terms = [f'"{t}"' for t in clean.split() if t]
-        return " ".join(terms)
+    @staticmethod
+    def _fts_query(terms: List[str]) -> str:
+        return " ".join('"' + t.replace('"', '""') + '"' for t in terms)
+
+    @staticmethod
+    def _like_pattern(term: str) -> str:
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return f"%{escaped}%"
 
     def save_result(self, result: OCRResult):
         logger.info("DB: Saving OCR result (%d characters)", len(result.text))
         conn = self.connection
-        try:
-            with conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """INSERT INTO history (timestamp, text, image_blob, engine_used, language, confidence) 
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (result.timestamp, result.text, result.image_bytes, result.engine_used, result.language, result.confidence)
-                )
-                last_id = cursor.lastrowid
-                
-                # Only run cleanup every 10 saves to reduce I/O pressure
-                if last_id % 10 == 0:
-                    cursor.execute("""
-                        DELETE FROM history WHERE id NOT IN (
-                            SELECT id FROM history ORDER BY timestamp DESC LIMIT 500
-                        )
-                    """)
-                return last_id
-        except Exception as e:
-            logger.error("DB: Failed to save result: %s", e)
-            raise
+        with conn:
+            cursor = conn.execute(
+                "INSERT INTO history (timestamp, text, engine_used, language, confidence) VALUES (?, ?, ?, ?, ?)",
+                (result.timestamp, result.text, result.engine_used, result.language, result.confidence)
+            )
+            pruned = conn.execute(
+                "DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY timestamp DESC LIMIT ?)",
+                (HISTORY_LIMIT,)
+            ).rowcount
+        if pruned:
+            conn.execute("PRAGMA incremental_vacuum").fetchall()
+        return cursor.lastrowid
+
+    def restore_result(self, item: dict):
+        with self.connection as conn:
+            conn.execute(
+                f"INSERT OR IGNORE INTO history ({HISTORY_COLUMNS}) VALUES (:id, :timestamp, :text, :engine_used, :language, :confidence)",
+                item
+            )
 
     def get_history(self, limit: int = 50, offset: int = 0) -> List[dict]:
-        safe_limit = min(limit, 200)
-        conn = self.connection
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "SELECT id, timestamp, text, engine_used, language, confidence FROM history ORDER BY timestamp DESC LIMIT ? OFFSET ?",
-                (safe_limit, offset)
-            )
-            return [dict(row) for row in cursor.fetchall()]
-        finally:
-            cursor.close()
+        rows = self.connection.execute(
+            f"SELECT {HISTORY_COLUMNS} FROM history ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            (min(limit, 200), offset)
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def search_history(self, query: str) -> List[dict]:
-        if not query:
+        terms = query.split() if query else []
+        if not terms:
             return self.get_history()
-            
-        clean_query = self._sanitize_fts_query(query)
-        if not clean_query:
-            return []
 
-        logger.info("DB: Searching history for query: '%s'", query)
-        conn = self.connection
-        cursor = conn.cursor()
-        try:
-            cursor.execute("""
-                SELECT h.id, h.timestamp, h.text, h.engine_used, h.language, h.confidence 
+        if all(len(t) >= 3 for t in terms):
+            sql = """
+                SELECT h.id, h.timestamp, h.text, h.engine_used, h.language, h.confidence
                 FROM history h
                 JOIN history_fts f ON h.id = f.rowid
                 WHERE history_fts MATCH ?
                 ORDER BY rank
                 LIMIT 200
-            """, (clean_query,))
-            return [dict(row) for row in cursor.fetchall()]
-        finally:
-            cursor.close()
+            """
+            params = (self._fts_query(terms),)
+        else:
+            where = " AND ".join("text LIKE ? ESCAPE '\\'" for _ in terms)
+            sql = f"SELECT {HISTORY_COLUMNS} FROM history WHERE {where} ORDER BY timestamp DESC LIMIT 200"
+            params = tuple(self._like_pattern(t) for t in terms)
+
+        return [dict(row) for row in self.connection.execute(sql, params).fetchall()]
 
     def clear_history(self):
         logger.info("DB: Purging all history")
         conn = self.connection
-        cursor = conn.cursor()
-        try:
-            cursor.execute("DELETE FROM history")
-            cursor.execute("INSERT INTO history_fts(history_fts) VALUES('delete-all')")
-            cursor.execute("INSERT INTO history_fts(history_fts) VALUES('rebuild')")
-            conn.commit()
-        finally:
-            cursor.close()
+        with conn:
+            conn.execute("DELETE FROM history")
+        conn.execute("PRAGMA incremental_vacuum").fetchall()
 
     def delete_result(self, result_id: int):
         conn = self.connection
-        cursor = conn.cursor()
-        try:
-            cursor.execute("DELETE FROM history WHERE id = ?", (result_id,))
-            conn.commit()
-        finally:
-            cursor.close()
+        with conn:
+            conn.execute("DELETE FROM history WHERE id = ?", (result_id,))
+        conn.execute("PRAGMA incremental_vacuum").fetchall()

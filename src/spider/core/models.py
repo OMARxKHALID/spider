@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
+
 
 @dataclass
 class OCRResult:
@@ -8,4 +8,3 @@ class OCRResult:
     engine_used: str
     timestamp: float
     language: str = "eng"
-    image_bytes: Optional[bytes] = field(default=None, repr=False)

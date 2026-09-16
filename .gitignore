@@ -1,9 +1,9 @@
 # Build & Packaging
 builddir/
-build*/
 obj-*/
 deb-build/
 .flatpak-builder/
+build-aux/flatpak-pip-generator*
 build-dir/
 AppDir/
 subprojects/*

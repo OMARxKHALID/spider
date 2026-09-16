@@ -36,25 +36,30 @@ meson setup builddir --prefix=/usr
 meson compile -C builddir
 
 info "Staging files for packaging..."
+find src -type d -name "__pycache__" -exec rm -rf {} +
 DESTDIR=/tmp/spider-deb meson install -C builddir
+
+VERSION=$(meson introspect builddir --projectinfo | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')
 
 info "Building the .deb package..."
 fpm -s dir -t deb \
   -n "spider" \
-  -v "1.0.0" \
+  -v "$VERSION" \
   --architecture all \
   --description "A fast, lightweight, and modern desktop OCR tool for Linux." \
   --maintainer "omarxkhalid" \
+  --license "GPL-3.0-or-later" \
   --category "Utility" \
   --depends "tesseract-ocr" \
   --depends "tesseract-ocr-eng" \
   --depends "python3-gi" \
   --depends "python3-opencv" \
+  --depends "python3-numpy" \
   --depends "gir1.2-gtk-4.0" \
-  --depends "gir1.2-adw-1" \
+  --depends "gir1.2-adw-1 (>= 1.5)" \
   -C /tmp/spider-deb .
 
 echo ""
 success "Spider .deb package has been created!"
-printf "  Install: ${BOLD}sudo apt install ./spider_1.0.0_all.deb${NC}\n"
+printf "  Install: ${BOLD}sudo apt install ./spider_${VERSION}_all.deb${NC}\n"
 echo ""

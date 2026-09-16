@@ -7,7 +7,7 @@ The `install.sh` script is the quickest way to compile and install Spider direct
 
 **What it does:**
 - Verifies all core system dependencies are present (Python 3, Tesseract, GTK4, Libadwaita).
-- Automatically sets up a local `.venv` and installs the required Python packages (`pytesseract`, `pillow`, `opencv-python`).
+- Automatically sets up a local `.venv` and installs the Python packages (`opencv-python`, plus `pillow` and `pytest` for the test suite).
 - Initializes a fresh `builddir` via Meson.
 - Compiles the application.
 

@@ -47,8 +47,7 @@ class TestFullPipeline:
             confidence=0.91,
             engine_used="tesseract",
             timestamp=time.time(),
-            language="eng",
-            image_bytes=b"fake_image_bytes"
+            language="eng"
         )
 
         db.save_result(result)

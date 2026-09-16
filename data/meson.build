@@ -1,8 +1,7 @@
-desktop_conf = configuration_data()
 desktop_file = configure_file(
   input: 'org.domain.Spider.desktop.in',
   output: 'org.domain.Spider.desktop',
-  configuration: desktop_conf,
+  configuration: conf,
   install: true,
   install_dir: join_paths(get_option('datadir'), 'applications')
 )

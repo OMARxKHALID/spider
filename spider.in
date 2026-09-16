@@ -1,45 +1,35 @@
-#!/usr/bin/env python3
+#!@PYTHON@
 import os
 import sys
 import signal
 
-# Get the absolute path of the directory containing this script
 script_dir = os.path.dirname(os.path.realpath(__file__))
 
-# 1. Handle Venv (local dev)
 venv_python = os.path.abspath(os.path.join(script_dir, '..', '.venv', 'bin', 'python3'))
 if os.path.exists(venv_python) and os.path.abspath(sys.executable) != venv_python:
     os.execl(venv_python, venv_python, *sys.argv)
 
-# 2. Handle GSettings Schemas (local dev)
-# If running from builddir, use the compiled schemas there
 build_schema_dir = os.path.join(script_dir, 'data')
 if os.path.exists(os.path.join(build_schema_dir, 'gschemas.compiled')):
     os.environ['GSETTINGS_SCHEMA_DIR'] = build_schema_dir
 
-# 3. Set TESSDATA_PREFIX for Flatpak and installed environments
-tessdata = os.path.join(
-    os.environ.get('FLATPAK_DEST', '/usr'),
-    'share', 'tessdata'
-)
-if os.path.isdir(tessdata):
-    os.environ.setdefault('TESSDATA_PREFIX', tessdata)
-
-# 4. Add package to path
 rel_datadir = os.path.abspath(os.path.join(script_dir, '..', 'share', 'spider'))
 if os.path.exists(rel_datadir):
     sys.path.insert(0, rel_datadir)
 
 pkgdatadir = '@DATADIR@/@PACKAGE_NAME@'
-if os.path.exists(pkgdatadir) and not pkgdatadir.startswith('@'):
-    if pkgdatadir not in sys.path:
-        sys.path.insert(0, pkgdatadir)
+if os.path.exists(pkgdatadir) and pkgdatadir not in sys.path:
+    sys.path.insert(0, pkgdatadir)
 
 srcdir = os.path.abspath(os.path.join(script_dir, '..', 'src'))
 if os.path.exists(os.path.join(srcdir, 'spider')):
     sys.path.insert(0, srcdir)
 
-from spider.main import main
+try:
+    from spider.main import main
+except (ImportError, ValueError) as e:
+    sys.stderr.write(f"Spider cannot start: {e}\nInstall python3-gi, gir1.2-gtk-4.0 (GTK 4) and gir1.2-adw-1 (libadwaita 1.5+).\n")
+    sys.exit(1)
 
 if __name__ == '__main__':
     signal.signal(signal.SIGINT, signal.SIG_DFL)
