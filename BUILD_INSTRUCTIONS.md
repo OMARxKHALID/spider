@@ -23,7 +23,7 @@ After successful compilation, the script will instruct you to run `sudo meson in
 When switching branches, making deep changes to dependencies, or seeing weird build errors, the codebase caches should be flushed. 
 
 **What it does:**
-- Deletes the Meson `builddir/` and Flatpak `.flatpak-builder/` compilation directories.
+- Deletes the Meson `builddir/` and the Flatpak `build-dir/` and `.flatpak-builder/` directories.
 - Removes any generated `.deb` package files and the `/tmp/spider-deb` staging ground.
 - Deletes the local Python `.venv/` to ensure a completely clean slate.
 - Recursively purges `__pycache__`, `.pytest_cache`, `.mypy_cache`, and `.egg-info` remnants.
@@ -48,9 +48,9 @@ Building a standard `.deb` file allows for easy installation and removal of Spid
 ```bash
 ./build_deb.sh
 ```
-Once complete, the script produces a file named `spider_1.0.0_all.deb`. You can install it natively using:
+Once complete, the script produces a file named after the project version, for example `spider_1.1.0_all.deb`. You can install it natively using:
 ```bash
-sudo apt install ./spider_1.0.0_all.deb
+sudo apt install ./spider_1.1.0_all.deb
 ```
 
 ---
@@ -59,16 +59,14 @@ sudo apt install ./spider_1.0.0_all.deb
 Spider comes with a Flatpak manifest out-of-the-box, ensuring it can run securely across all Linux distributions (Fedora, Arch, Ubuntu, etc.).
 
 **What it does:**
-- Uses `flatpak-builder` to download the GNOME 46 runtime and compile Spider in an isolated container.
-- Embeds required Python dependencies securely.
+- Uses `flatpak-builder` with the GNOME 50 SDK to compile Spider in an isolated container.
+- Builds OpenCV (core, imgproc, imgcodecs), Leptonica and Tesseract from source, installs numpy from pinned wheels, and bundles English Tesseract data. Every download is verified by checksum.
 
 **How to use:**
 You do not need a custom `.sh` script for this, as the standard Flatpak workflow applies:
 ```bash
-# Build the flatpak
-flatpak-builder --user --install --force-clean build-dir build-aux/org.domain.Spider.json
-
-# Run the app
+flatpak install --user flathub org.gnome.Sdk//50 org.flatpak.Builder
+flatpak run org.flatpak.Builder --user --install --force-clean build-dir build-aux/org.domain.Spider.json
 flatpak run org.domain.Spider
 ```
 

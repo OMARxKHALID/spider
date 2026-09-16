@@ -13,13 +13,19 @@ error() { printf "${RED}${BOLD}Error:${NC} %s\n" "$1"; exit 1; }
 
 info "Spider: Cleaning Codebase Caches"
 
-# Change to the script's directory
 cd "$(dirname "$0")"
 
 if [[ -d "builddir" ]]; then
     info "Removing build directory (builddir/)..."
     rm -rf builddir/
 fi
+
+for dir in build-dir .flatpak-builder; do
+    if [[ -d "$dir" ]]; then
+        info "Removing Flatpak build directory ($dir/)..."
+        rm -rf "$dir"
+    fi
+done
 
 if [[ -d "deb-build" ]]; then
     info "Removing Debian build directory (deb-build/)..."

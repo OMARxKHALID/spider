@@ -37,14 +37,13 @@ sudo meson install -C build
 
 ### Flatpak
 
-A Flatpak manifest is provided in `build-aux/org.domain.Spider.json`.
+A Flatpak manifest is provided in `build-aux/org.domain.Spider.json`. It targets the GNOME 50 runtime and builds OpenCV, Leptonica and Tesseract from source, so every dependency is pinned by checksum.
 
 ```bash
-flatpak-builder --user --install --force-clean build-dir build-aux/org.domain.Spider.json
+flatpak install --user flathub org.gnome.Sdk//50 org.flatpak.Builder
+flatpak run org.flatpak.Builder --user --install --force-clean build-dir build-aux/org.domain.Spider.json
 flatpak run org.domain.Spider
 ```
-
-_Note: For production Flatpak builds, it is highly recommended to run `flatpak-pip-generator` to pin Python dependencies into a deterministic `python3-deps.json` module._
 
 ---
 

@@ -6,7 +6,6 @@ from spider.core.models import OCRResult
 
 class TestDatabase:
 
-    # ── Basic CRUD ──────────────────────────────────────────
 
     def test_save_and_retrieve(self, memory_db):
         res = OCRResult(text="Hello World", confidence=0.95, engine_used="eng", timestamp=time.time(), language="eng")
@@ -17,7 +16,6 @@ class TestDatabase:
         assert abs(items[0]['confidence'] - 0.95) < 0.001
 
     def test_confidence_zero_not_lost(self, memory_db):
-        """confidence=0 must NOT become None or be coerced."""
         res = OCRResult(text="Poor OCR", confidence=0.0, engine_used="eng", timestamp=time.time(), language="eng")
         memory_db.save_result(res)
         items = memory_db.get_history()
@@ -25,13 +23,11 @@ class TestDatabase:
             "Zero confidence must be stored and returned as 0.0"
 
     def test_confidence_none_returns_none(self, memory_db):
-        """None confidence must survive round-trip."""
         res = OCRResult(text="Unknown", confidence=None, engine_used="eng", timestamp=time.time(), language="eng")
         memory_db.save_result(res)
         items = memory_db.get_history()
         assert items[0]['confidence'] is None
 
-    # ── FTS5 search ─────────────────────────────────────────
 
     def test_fts_basic_search(self, memory_db):
         memory_db.save_result(OCRResult(text="Hello World from OCR", confidence=0.9, engine_used="eng", timestamp=time.time(), language="eng"))
@@ -63,7 +59,6 @@ class TestDatabase:
             "FTS index must be cleared after clear_history()"
 
     def test_fts_query_injection_blocked(self, memory_db):
-        """Malicious FTS operators must not crash or return wrong results."""
         memory_db.save_result(OCRResult(text="sensitive data", confidence=0.9, engine_used="eng", timestamp=time.time(), language="eng"))
         dangerous_queries = [
             'NOT sensitive',
@@ -94,7 +89,6 @@ class TestDatabase:
         assert len(memory_db.search_history('"quoted"')) == 1
 
     def test_fts_unicode_search(self, memory_db):
-        """Non-ASCII text must be searchable."""
         memory_db.save_result(OCRResult(text="مرحبا بالعالم", confidence=0.9, engine_used="eng", timestamp=time.time(), language="ara"))
         results = memory_db.search_history("مرحبا")
         assert len(results) == 1, "Arabic text must be searchable via FTS"
@@ -107,28 +101,22 @@ class TestDatabase:
         assert memory_db.get_history() == [item]
         assert len(memory_db.search_history("Restore")) == 1
 
-    # ── FTS UPDATE trigger ──────────────────────────────────
 
     def test_fts_update_trigger(self, memory_db):
-        """Editing OCR text must update FTS index."""
         memory_db.save_result(OCRResult(text="Original text", confidence=0.9, engine_used="eng", timestamp=time.time(), language="eng"))
         items = memory_db.get_history()
         item_id = items[0]['id']
-        # Update the text directly
         conn = memory_db.connection
         conn.execute("UPDATE history SET text=? WHERE id=?",
                      ("Completely different", item_id))
         conn.commit()
-        # Old text must not be findable
         old_results = memory_db.search_history("Original")
         assert len(old_results) == 0, \
             "After update, old text must not appear in FTS"
-        # New text must be findable
         new_results = memory_db.search_history("Completely different")
         assert len(new_results) == 1, \
             "After update, new text must appear in FTS"
 
-    # ── Permissions ─────────────────────────────────────────
 
     def test_db_directory_permissions(self, tmp_path, monkeypatch):
         import stat
@@ -152,10 +140,8 @@ class TestDatabase:
         assert len(db.search_history("legacy")) == 1
         db.close()
 
-    # ── Thread safety ───────────────────────────────────────
 
     def test_concurrent_writes_no_corruption(self, memory_db):
-        """Multiple threads writing simultaneously must not corrupt data."""
         errors = []
         def worker(n):
             try:
@@ -173,10 +159,8 @@ class TestDatabase:
         assert len(items) == 25, \
             f"Expected 25 items from 5 threads × 5 writes, got {len(items)}"
 
-    # ── Clear performance ───────────────────────────────────
 
     def test_clear_history_performance(self, memory_db):
-        """clear_history on 1000 rows must complete in under 2 seconds."""
         for i in range(1000):
             memory_db.save_result(OCRResult(text=f"Item {i}", confidence=0.9, engine_used="eng", timestamp=time.time(), language="eng"))
         start = time.time()

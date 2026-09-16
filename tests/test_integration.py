@@ -11,7 +11,6 @@ import time
 class TestFullPipeline:
 
     def test_full_pipeline_preprocess_to_text(self, tmp_path):
-        """Preprocessor → Tesseract → text output end to end."""
         from spider.vision.preprocessor import Preprocessor
         from spider.ocr.tesseract import TesseractEngine
 
@@ -35,7 +34,6 @@ class TestFullPipeline:
             "Pipeline produced zero confidence"
 
     def test_pipeline_result_saved_to_db(self, tmp_path):
-        """Full pipeline result must be persistable to DB."""
         from spider.storage.db import DatabaseManager
         from spider.core.models import OCRResult
         import time
@@ -58,7 +56,6 @@ class TestFullPipeline:
         db.close()
 
     def test_pipeline_dark_mode_end_to_end(self):
-        """Dark mode screenshot → readable text."""
         from spider.vision.preprocessor import Preprocessor
         from spider.ocr.tesseract import TesseractEngine
 
